@@ -122,6 +122,8 @@ def main():
         names += ['tests.test_observer_proxy']
         names += ['tests.test_desktop_settings', 'tests.test_desktop_workers']
         names += ['tests.test_single_instance', 'tests.test_startup_safety',
+                  'tests.test_main_window.MainWindowTests.test_delete_checked_accounts_ignores_highlighted_unchecked_row',
+                  'tests.test_main_window.MainWindowTests.test_unchecked_highlighted_account_cannot_be_deleted',
                   'tests.test_main_window.MainWindowTests.test_cancelling_account_deletion_preserves_file_and_selection',
                   'tests.test_main_window.MainWindowTests.test_selected_account_can_be_deleted_without_exposing_full_id']
         names += ['tests.test_main_window.MainWindowTests.test_room_execution_setting_labels_limit_persists_and_is_readonly_while_running',

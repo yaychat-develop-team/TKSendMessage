@@ -251,6 +251,7 @@ class MainWindow(QMainWindow):
         self.add_button.clicked.connect(self.add_account)
         self.delete_button = QPushButton('删除账号')
         self.delete_button.setObjectName('deleteAccountButton')
+        self.delete_button.setToolTip('删除绿色勾选的账号（支持多选，删除前需确认）')
         self.delete_button.clicked.connect(self.delete_selected_account)
         self.view_button = QPushButton('查看详情')
         self.view_button.setObjectName('viewAccountButton')
@@ -445,7 +446,7 @@ class MainWindow(QMainWindow):
         self.start_button.setEnabled(valid and checked_count > 0 and not busy)
         self.add_button.setEnabled(not busy)
         self.delete_button.setEnabled(
-            not busy and self.account_table.selected_account_id() is not None
+            not busy and checked_count > 0
         )
         self.view_button.setEnabled(
             not self._closing and self.account_table.selected_account_id() is not None
@@ -528,17 +529,22 @@ class MainWindow(QMainWindow):
     def delete_selected_account(self):
         if self._closing or self.is_busy:
             return
-        account_id = self.account_table.selected_account_id()
-        if not account_id:
-            self.status_label.setText('请先选择要删除的账号。')
+        account_ids = tuple(self.account_table.checked_account_ids())
+        if not account_ids:
+            self.status_label.setText('请先勾选要删除的账号。')
             return
-        row = self.account_table.currentRow()
-        username = self.account_table.item(row, 1).text()
+        usernames = [self.account_table.item(row, 1).text()
+                     for row in range(self.account_table.rowCount())
+                     if self.account_table.item(row, 0).checkState() == Qt.CheckState.Checked]
         prompt = QMessageBox(self)
         prompt.setWindowTitle('确认删除账号')
         prompt.setIcon(QMessageBox.Icon.Warning)
         prompt.setTextFormat(Qt.TextFormat.PlainText)
-        prompt.setText(f'确定删除本机保存的账号“{username}”吗？\n仅删除本机登录信息，不会注销 TikTok 账号。再次使用需要重新登录。')
+        preview = '\n'.join(usernames[:10])
+        if len(usernames) > 10:
+            preview += f'\n……另有 {len(usernames) - 10} 个账号（完整名单见详情）'
+            prompt.setDetailedText('\n'.join(usernames))
+        prompt.setText(f'确定删除绿色勾选的 {len(account_ids)} 个账号吗？\n{preview}\n\n仅删除本机登录信息，不会注销 TikTok 账号。再次使用需要重新登录。')
         prompt.setStandardButtons(QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.Cancel)
         prompt.button(QMessageBox.StandardButton.Yes).setText('删除账号')
         prompt.button(QMessageBox.StandardButton.Cancel).setText('取消')
@@ -552,16 +558,18 @@ class MainWindow(QMainWindow):
             return
         try:
             store = load_account_store(self.paths.account_store)
-            if not remove_account(store, account_id):
+            removed = [account_id for account_id in account_ids if remove_account(store, account_id)]
+            if not removed:
                 self.status_label.setText('所选账号已不存在。')
                 self.refresh_accounts()
                 return
             save_account_store_atomic(self.paths.account_store, store)
-            logger.success(
-                '账号已删除 | account_id={} | classification=account_deleted',
-                account_id[:12],
-            )
-            self.status_label.setText('账号已删除。')
+            for account_id in removed:
+                logger.success(
+                    '账号已删除 | account_id={} | classification=account_deleted',
+                    account_id[:12],
+                )
+            self.status_label.setText(f'已删除 {len(removed)} 个勾选账号。')
             self.refresh_accounts()
         except Exception as exc:
             self.status_label.setText(_ERRORS.get(

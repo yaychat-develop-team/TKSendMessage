@@ -681,6 +681,8 @@ class MainWindowTests(unittest.TestCase):
 
         table.selectRow(0)
         self.app.processEvents()
+        self.assertFalse(delete.isEnabled())
+        table.item(0, 0).setCheckState(Qt.CheckState.Checked)
         self.assertTrue(delete.isEnabled())
         self.assertIsNone(table.item(0, 0).data(256))
         from PySide6.QtWidgets import QMessageBox
@@ -706,6 +708,7 @@ class MainWindowTests(unittest.TestCase):
         account = self.save_account(username='viewer')
         self.window.refresh_accounts()
         self.window.account_table.selectRow(0)
+        self.window.account_table.item(0, 0).setCheckState(Qt.CheckState.Checked)
         before = self.paths.account_store.read_bytes()
         def cancel():
             prompt = self.window.findChild(QMessageBox)
@@ -715,6 +718,43 @@ class MainWindowTests(unittest.TestCase):
         self.window.delete_selected_account()
         self.assertEqual(self.paths.account_store.read_bytes(), before)
         self.assertEqual(self.window.account_table.selected_account_id(), account['id'])
+        self.assertEqual(self.window.account_table.checked_account_ids(), [account['id']])
+
+    def test_delete_checked_accounts_ignores_highlighted_unchecked_row(self):
+        from PySide6.QtCore import QTimer
+        from PySide6.QtWidgets import QMessageBox
+        self.save_account('one', username='delete_one')
+        self.save_account('two', username='delete_two')
+        keep = self.save_account('three', username='keep_me')
+        self.window.refresh_accounts()
+        table = self.window.account_table
+        table.item(0, 0).setCheckState(Qt.CheckState.Checked)
+        table.item(1, 0).setCheckState(Qt.CheckState.Checked)
+        table.selectRow(2)
+        prompts = []
+        def accept():
+            prompt = self.window.findChild(QMessageBox)
+            prompts.append(prompt.text())
+            prompt.done(QMessageBox.StandardButton.Yes)
+        QTimer.singleShot(0, accept)
+        self.window.delete_button.click()
+        self.assertIn('delete_one', prompts[0])
+        self.assertIn('delete_two', prompts[0])
+        self.assertNotIn('keep_me', prompts[0])
+        remaining = load_account_store(self.paths.account_store)['accounts']
+        self.assertEqual([account['id'] for account in remaining], [keep['id']])
+        self.assertEqual(table.rowCount(), 1)
+        self.assertFalse(self.window.delete_button.isEnabled())
+
+    def test_unchecked_highlighted_account_cannot_be_deleted(self):
+        self.save_account(username='keep_me')
+        self.window.refresh_accounts()
+        self.window.account_table.selectRow(0)
+        before = self.paths.account_store.read_bytes()
+        with patch('desktop.main_window.QMessageBox.exec', return_value=0) as prompt:
+            self.window.delete_selected_account()
+        self.assertEqual(prompt.call_count, 0)
+        self.assertEqual(self.paths.account_store.read_bytes(), before)
 
     def test_selected_account_details_show_complete_saved_record(self):
         account = self.save_account(username='viewer')
