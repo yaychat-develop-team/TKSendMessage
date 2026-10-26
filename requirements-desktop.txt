@@ -1,0 +1,3 @@
+-r requirements.txt
+# QtCore/QtGui/QtWidgets desktop interface (no QtWebEngine).
+PySide6-Essentials>=6.12,<6.13

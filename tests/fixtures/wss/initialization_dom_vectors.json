@@ -1,0 +1,21 @@
+{
+  "upstream_commit": "b3b2a448800e4ca9e061203b9ba1f53d1d6d3082",
+  "guard_sha256": "CEA3B296A093A0161A97B92E5E2733C8BD67B2C217C676F9D730D9259BB5ECAA",
+  "method": "Original SDK, fresh offline process, same seed/time as frontier fixture. Only independent synthetic browser object tags/documentMode varied. No SDK source or private state modified. env_code decoded independently from the original signature; DOM flag is bit7.",
+  "user_agent": "Mozilla/5.0 SyntheticOfflineFixture",
+  "normal_snapshot": {
+    "window_type": "object", "window_to_string": "[object Window]", "window_object_tag": "[object Window]",
+    "document_type": "object", "document_to_string": "[object HTMLDocument]",
+    "navigator_type": "object", "navigator_to_string": "[object Navigator]",
+    "location_type": "object", "history_type": "object", "history_to_string": "[object History]",
+    "document_mode": null
+  },
+  "cases": [
+    {"profile": "normal-dom", "overrides": {}, "expected_suspicious": false, "sdk_output": "RsdyuufD4MaAoe5E", "sdk_env_code": 5131},
+    {"profile": "bad-window", "overrides": {"window_to_string": "[object Object]", "window_object_tag": "[object Object]"}, "expected_suspicious": true, "sdk_output": "RsdyTLVD4MaAoeRC", "sdk_env_code": 129},
+    {"profile": "bad-document", "overrides": {"document_to_string": "[object Object]"}, "expected_suspicious": true, "sdk_output": "RsdyTLVD4MaAoeRC", "sdk_env_code": 129},
+    {"profile": "bad-navigator", "overrides": {"navigator_to_string": "[object Object]"}, "expected_suspicious": true, "sdk_output": "RsdyTLVD4MaAoeRC", "sdk_env_code": 129},
+    {"profile": "bad-history", "overrides": {"history_to_string": "[object Object]"}, "expected_suspicious": true, "sdk_output": "RsdyTLVD4MaAoeRC", "sdk_env_code": 129},
+    {"profile": "ie-history", "overrides": {"history_to_string": "[object Object]", "document_mode": 11}, "expected_suspicious": false, "sdk_output": "RsdyuufD4MaAoe5E", "sdk_env_code": 5131}
+  ]
+}

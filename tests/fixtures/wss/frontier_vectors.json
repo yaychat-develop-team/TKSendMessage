@@ -1,0 +1,25 @@
+{
+  "upstream_commit": "b3b2a448800e4ca9e061203b9ba1f53d1d6d3082",
+  "scope": "Initialized empty-payload frontier calculation only; not proof that browser bootstrap can obtain the required state.",
+  "provenance": "Original SDK via approved offline guard BFCF3CA5B277998EFEC2F529AFF43D9605573E622F096285135FB893747B404F. Output from fresh processes, RNG state observed directly at calls 789..792. State bytes independently decoded from original output using the static legacy RC4/base64 layout. No SDK/Node is needed by this fixture or its tests.",
+  "state": {"initialized": true, "env_code": 129, "ub_code": 14, "bogus_index": 0},
+  "defaults": {"cookie": "", "user_agent": "Mozilla/5.0 SyntheticOfflineFixture", "referer": "https://www.tiktok.com/live"},
+  "cases": [
+    {"now_ms": 1700000000000, "rng_state": 466196980, "expected": "RsdyTLVD4MaAoeRC"},
+    {"now_ms": 1700000000000, "rng_state": 466196980, "cookie": "ttwid=synthetic_guest", "expected": "RsdyTLVD4MaAoeRC"},
+    {"now_ms": 1700000000000, "rng_state": 466196980, "cookie": "sessionid=synthetic_login; ttwid=synthetic_guest", "expected": "RsdyTLVD4MaAoeRC"},
+    {"now_ms": 1700000000000, "rng_state": 466196980, "cookie": "fixture=unicode_test", "referer": "https://www.tiktok.com/@fixture/live?label=%E4%BD%A0%E5%A5%BD", "expected": "RsdyTLVD4MaAoeRC"},
+    {"now_ms": 1700000000000, "rng_state": 466196980, "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) SyntheticOfflineFixture", "expected": "RsdyTLVD4MaAoeRC"},
+    {"now_ms": 1700000000000, "rng_state": 466196980, "metrics": {"screenWidth": 1440, "screenHeight": 900, "devicePixelRatio": 2}, "expected": "RsdyTLVD4MaAoeRC"},
+    {"now_ms": 1800000000000, "rng_state": 2757930144, "expected": "WMBjluKyZ4D9qj4H"},
+    {"now_ms": 1800000000000, "rng_state": 2757930144, "cookie": "ttwid=synthetic_guest", "expected": "WMBjluKyZ4D9qj4H"},
+    {"now_ms": 1800000000000, "rng_state": 2757930144, "cookie": "sessionid=synthetic_login; ttwid=synthetic_guest", "expected": "WMBjluKyZ4D9qj4H"},
+    {"now_ms": 1800000000000, "rng_state": 2757930144, "cookie": "fixture=unicode_test", "referer": "https://www.tiktok.com/@fixture/live?label=%E4%BD%A0%E5%A5%BD", "expected": "WMBjluKyZ4D9qj4H"},
+    {"now_ms": 1800000000000, "rng_state": 2757930144, "user_agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 14_0) SyntheticOfflineFixture", "expected": "WMBjluKyZ4D9qj4H"},
+    {"now_ms": 1800000000000, "rng_state": 2757930144, "metrics": {"screenWidth": 1440, "screenHeight": 900, "devicePixelRatio": 2}, "expected": "WMBjluKyZ4D9qj4H"},
+    {"now_ms": 1800000000000, "rng_state": 466196980, "expected": "RsdyTLVD4MaAoeRC"},
+    {"now_ms": 1700000000000, "rng_state": 2757930144, "expected": "WMBjluKyZ4D9qj4H"},
+    {"now_ms": 1700000000000, "rng_state": 1089471679, "expected": "R/NlLWgbXkWtzesg"},
+    {"now_ms": 1700000000000, "rng_state": 466196980, "cookie": "fixture=你好👋", "referer": "https://www.tiktok.com/@fixture/live?label=%E4%BD%A0%E5%A5%BD", "metrics": {"screen_width": 1440, "screen_height": 900, "device_pixel_ratio": 2, "max_touch_points": 0}, "expected": "RsdyTLVD4MaAoeRC"}
+  ]
+}

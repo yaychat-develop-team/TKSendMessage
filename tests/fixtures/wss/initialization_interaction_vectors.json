@@ -1,0 +1,14 @@
+{
+  "upstream_commit": "b3b2a448800e4ca9e061203b9ba1f53d1d6d3082",
+  "guard_sha256": "B5A6D157E6DA0A89CD8D9E8E5A2F3C3859A7FBE0A6FA1FBBC10B4EB307977B20",
+  "method": "Synthetic document events dispatched after load to the original SDK in the independent offline environment; controlled clock advances by each event interval. SDK files unchanged. ub_code is byte3 of independently RC4-decoded original output.",
+  "cases": [
+    {"profile": "normal-dom", "kind": null, "count": 0, "step_ms": 10, "step_x": 100, "trusted": true, "expected": 14, "sdk_output": "RsdyuufD4MaAoe5E"},
+    {"profile": "mouse", "kind": "mousemove", "count": 8, "step_ms": 10, "step_x": 100, "trusted": true, "expected": 12, "sdk_output": "Rsdyuufd4MaAoe57"},
+    {"profile": "click", "kind": "click", "count": 8, "step_ms": 10, "step_x": 100, "trusted": true, "expected": 10, "sdk_output": "Rsdyuufg4MaAoe5L"},
+    {"profile": "keyboard", "kind": "keydown", "count": 8, "step_ms": 10, "step_x": 100, "trusted": true, "expected": 6, "sdk_output": "RsdyuufK4MaAoe5Y"},
+    {"profile": "untrusted-mouse", "kind": "mousemove", "count": 8, "step_ms": 10, "step_x": 100, "trusted": false, "expected": 140, "sdk_output": "Rsdyuuwd4MaAoeR7"},
+    {"profile": "fast-mouse", "kind": "mousemove", "count": 8, "step_ms": 10, "step_x": 1000, "trusted": true, "expected": 28, "sdk_output": "Rsdyuufw4MaAoe5n"},
+    {"profile": "fast-keyboard", "kind": "keydown", "count": 8, "step_ms": 1, "step_x": 100, "trusted": true, "expected": 38, "sdk_output": "RsdyuufY4MaAoe5K"}
+  ]
+}

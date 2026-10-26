@@ -1,0 +1,572 @@
+{
+  "purpose": "Bounded six-message heartbeat comparison; contains no credentials",
+  "date": "2026-10-19",
+  "account": "spider_king017",
+  "host": "gonghuiwurao",
+  "trials": [
+    {
+      "trial": 1,
+      "configuration": {
+        "stage": "configuration",
+        "host": "gonghuiwurao",
+        "min_beats": 3,
+        "prewarm_seconds": 30,
+        "hold_seconds": 30
+      },
+      "heartbeat": {
+        "stage": "heartbeat_ready",
+        "elapsed_seconds": 30.14,
+        "connected": true,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 3,
+          "ack": 19
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 2,
+          "msg": 19
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15.02,
+            15
+          ]
+        },
+        "parse_errors": 0
+      },
+      "post": {
+        "stage": "response",
+        "ok": true,
+        "http": 200,
+        "status": 0,
+        "data_fields": [
+          "content",
+          "content_language",
+          "fullscreen_text_color",
+          "id",
+          "msg_id",
+          "msg_id_str",
+          "user",
+          "user_identity"
+        ],
+        "has_message_id": true,
+        "has_server_prompt": false,
+        "server_content_matches": true
+      },
+      "after_send": {
+        "stage": "heartbeat_after_send",
+        "held_seconds": 30.02,
+        "connected": true,
+        "account_stream_comments": 15,
+        "account_stream_content_matches": 0,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 5,
+          "ack": 32
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 5,
+          "msg": 32
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15.02,
+            15,
+            15.02,
+            15.02
+          ]
+        },
+        "parse_errors": 0
+      },
+      "delivery": {
+        "stage": "delivery",
+        "observed": false,
+        "listener_available": true,
+        "error_type": null,
+        "comments": 15,
+        "matching_content": 0,
+        "matching_sender": 0,
+        "matching_message_id": 0,
+        "observed_message_id_matches": false
+      }
+    },
+    {
+      "trial": 2,
+      "configuration": {
+        "stage": "configuration",
+        "host": "gonghuiwurao",
+        "min_beats": 2,
+        "prewarm_seconds": 15,
+        "hold_seconds": 30
+      },
+      "heartbeat": {
+        "stage": "heartbeat_ready",
+        "elapsed_seconds": 15.2,
+        "connected": true,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 2,
+          "ack": 15
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 1,
+          "msg": 15
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15.01
+          ]
+        },
+        "parse_errors": 0
+      },
+      "post": {
+        "stage": "response",
+        "ok": true,
+        "http": 200,
+        "status": 0,
+        "data_fields": [
+          "content",
+          "content_language",
+          "fullscreen_text_color",
+          "id",
+          "msg_id",
+          "msg_id_str",
+          "user",
+          "user_identity"
+        ],
+        "has_message_id": true,
+        "has_server_prompt": false,
+        "server_content_matches": true
+      },
+      "after_send": {
+        "stage": "heartbeat_after_send",
+        "held_seconds": 30,
+        "connected": true,
+        "account_stream_comments": 31,
+        "account_stream_content_matches": 0,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 4,
+          "ack": 40
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 4,
+          "msg": 40
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15.01,
+            14.99,
+            15
+          ]
+        },
+        "parse_errors": 0
+      },
+      "delivery": {
+        "stage": "delivery",
+        "observed": false,
+        "listener_available": true,
+        "error_type": null,
+        "comments": 32,
+        "matching_content": 0,
+        "matching_sender": 0,
+        "matching_message_id": 0,
+        "observed_message_id_matches": false
+      }
+    },
+    {
+      "trial": 3,
+      "configuration": {
+        "stage": "configuration",
+        "host": "gonghuiwurao",
+        "min_beats": 4,
+        "prewarm_seconds": 45,
+        "hold_seconds": 30
+      },
+      "heartbeat": {
+        "stage": "heartbeat_ready",
+        "elapsed_seconds": 45.19,
+        "connected": true,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 4,
+          "ack": 29
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 4,
+          "msg": 29
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15,
+            14.99,
+            15.01
+          ]
+        },
+        "parse_errors": 0
+      },
+      "post": {
+        "stage": "response",
+        "ok": true,
+        "http": 200,
+        "status": 0,
+        "data_fields": [
+          "content",
+          "content_language",
+          "fullscreen_text_color",
+          "id",
+          "msg_id",
+          "msg_id_str",
+          "user",
+          "user_identity"
+        ],
+        "has_message_id": true,
+        "has_server_prompt": false,
+        "server_content_matches": true
+      },
+      "after_send": {
+        "stage": "heartbeat_after_send",
+        "held_seconds": 30,
+        "connected": true,
+        "account_stream_comments": 23,
+        "account_stream_content_matches": 0,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 6,
+          "ack": 59
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 6,
+          "msg": 59
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15,
+            14.99,
+            15.01,
+            15.02,
+            15.03
+          ]
+        },
+        "parse_errors": 0
+      },
+      "delivery": {
+        "stage": "delivery",
+        "observed": false,
+        "listener_available": true,
+        "error_type": null,
+        "comments": 23,
+        "matching_content": 0,
+        "matching_sender": 0,
+        "matching_message_id": 0,
+        "observed_message_id_matches": false
+      }
+    },
+    {
+      "trial": 4,
+      "configuration": {
+        "stage": "configuration",
+        "host": "gonghuiwurao",
+        "min_beats": 2,
+        "prewarm_seconds": 15,
+        "hold_seconds": 30
+      },
+      "heartbeat": {
+        "stage": "heartbeat_ready",
+        "elapsed_seconds": 15.03,
+        "connected": true,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 2,
+          "ack": 8
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 1,
+          "msg": 8
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15.02
+          ]
+        },
+        "parse_errors": 0
+      },
+      "post": {
+        "stage": "response",
+        "ok": true,
+        "http": 200,
+        "status": 0,
+        "data_fields": [
+          "content",
+          "content_language",
+          "fullscreen_text_color",
+          "id",
+          "msg_id",
+          "msg_id_str",
+          "user",
+          "user_identity"
+        ],
+        "has_message_id": true,
+        "has_server_prompt": false,
+        "server_content_matches": true
+      },
+      "after_send": {
+        "stage": "heartbeat_after_send",
+        "held_seconds": 30,
+        "connected": true,
+        "account_stream_comments": 15,
+        "account_stream_content_matches": 0,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 4,
+          "ack": 23
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 4,
+          "msg": 23
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15.02,
+            15.02,
+            15.02
+          ]
+        },
+        "parse_errors": 0
+      },
+      "delivery": {
+        "stage": "delivery",
+        "observed": false,
+        "listener_available": true,
+        "error_type": null,
+        "comments": 17,
+        "matching_content": 0,
+        "matching_sender": 0,
+        "matching_message_id": 0,
+        "observed_message_id_matches": false
+      }
+    },
+    {
+      "trial": 5,
+      "configuration": {
+        "stage": "configuration",
+        "host": "gonghuiwurao",
+        "min_beats": 4,
+        "prewarm_seconds": 45,
+        "hold_seconds": 30
+      },
+      "heartbeat": {
+        "stage": "heartbeat_ready",
+        "elapsed_seconds": 45.16,
+        "connected": true,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 4,
+          "ack": 16
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 4,
+          "msg": 16
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15,
+            14.99,
+            15.01
+          ]
+        },
+        "parse_errors": 0
+      },
+      "post": {
+        "stage": "response",
+        "ok": true,
+        "http": 200,
+        "status": 0,
+        "data_fields": [
+          "content",
+          "content_language",
+          "fullscreen_text_color",
+          "id",
+          "msg_id",
+          "msg_id_str",
+          "user",
+          "user_identity"
+        ],
+        "has_message_id": true,
+        "has_server_prompt": false,
+        "server_content_matches": true
+      },
+      "after_send": {
+        "stage": "heartbeat_after_send",
+        "held_seconds": 30.12,
+        "connected": true,
+        "account_stream_comments": 15,
+        "account_stream_content_matches": 1,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 6,
+          "ack": 23
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 6,
+          "msg": 23
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15,
+            14.99,
+            15.01,
+            15,
+            15.02
+          ]
+        },
+        "parse_errors": 0
+      },
+      "delivery": {
+        "stage": "delivery",
+        "observed": true,
+        "listener_available": true,
+        "error_type": null,
+        "comments": 15,
+        "matching_content": 1,
+        "matching_sender": 1,
+        "matching_message_id": 1,
+        "observed_message_id_matches": true
+      }
+    },
+    {
+      "trial": 6,
+      "configuration": {
+        "stage": "configuration",
+        "host": "gonghuiwurao",
+        "min_beats": 3,
+        "prewarm_seconds": 30,
+        "hold_seconds": 30
+      },
+      "heartbeat": {
+        "stage": "heartbeat_ready",
+        "elapsed_seconds": 30.05,
+        "connected": true,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 3,
+          "ack": 19
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 2,
+          "msg": 19
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15.02,
+            15
+          ]
+        },
+        "parse_errors": 0
+      },
+      "post": {
+        "stage": "response",
+        "ok": true,
+        "http": 200,
+        "status": 0,
+        "data_fields": [
+          "content",
+          "content_language",
+          "fullscreen_text_color",
+          "id",
+          "msg_id",
+          "msg_id_str",
+          "user",
+          "user_identity"
+        ],
+        "has_message_id": true,
+        "has_server_prompt": false,
+        "server_content_matches": true
+      },
+      "after_send": {
+        "stage": "heartbeat_after_send",
+        "held_seconds": 30.16,
+        "connected": true,
+        "account_stream_comments": 20,
+        "account_stream_content_matches": 1,
+        "sent": {
+          "im_enter_room": 1,
+          "hb": 5,
+          "ack": 28
+        },
+        "received": {
+          "im_enter_room_resp": 1,
+          "hb": 5,
+          "msg": 28
+        },
+        "entered_rooms": [
+          "7698365653882768148"
+        ],
+        "heartbeat_gaps_s": {
+          "7698365653882768148": [
+            15.02,
+            15,
+            15,
+            15.01
+          ]
+        },
+        "parse_errors": 0
+      },
+      "delivery": {
+        "stage": "delivery",
+        "observed": true,
+        "listener_available": true,
+        "error_type": null,
+        "comments": 20,
+        "matching_content": 1,
+        "matching_sender": 1,
+        "matching_message_id": 1,
+        "observed_message_id_matches": true
+      }
+    }
+  ]
+}

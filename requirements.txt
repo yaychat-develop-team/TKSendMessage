@@ -1,0 +1,7 @@
+curl-cffi
+loguru
+DrissionPage
+psutil>=5.9,<8
+websocket-client==1.7.0
+PySocks>=1.7.1,<2
+cryptography>=42,<46
