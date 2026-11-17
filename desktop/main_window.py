@@ -14,7 +14,7 @@ from PySide6.QtWidgets import (QFrame, QFormLayout, QGridLayout, QGroupBox,
     QComboBox, QCheckBox, QMessageBox)
 
 from .account_view import AccountTable, load_account_summaries
-from .account_edit import AccountEditError, save_edited_account
+from .account_edit import AccountEditError, save_edited_account, save_account_remark
 from .dialogs import AccountDetailsDialog, SettingsDialog, DeliveryDetailsDialog
 from .log_bridge import QtLogSink, daily_log_path, sanitize_log_text
 from .paths import RuntimePaths
@@ -268,7 +268,10 @@ class MainWindow(QMainWindow):
         self.account_table.setFixedHeight(70)
         self.account_table.itemSelectionChanged.connect(self._update_controls)
         self.account_table.itemChanged.connect(self._update_controls)
-        self.account_table.itemDoubleClicked.connect(lambda *_: self.show_selected_account())
+        self.account_table.itemDoubleClicked.connect(
+            lambda item: self.show_selected_account()
+            if item.column() != AccountTable.COL_REMARK else None)
+        self.account_table.remark_edited.connect(self._save_account_remark)
         self.checked_count = QLabel('发送账号：已选 0 个')
         self.checked_count.setObjectName('checkedAccountCount')
         self.check_all_button = QPushButton('全选')
@@ -283,6 +286,15 @@ class MainWindow(QMainWindow):
         account_meta.setSpacing(12)
         account_meta.addWidget(self.account_count)
         account_meta.addWidget(self.checked_count)
+        self.account_search = QLineEdit()
+        self.account_search.setObjectName('accountSearchInput')
+        self.account_search.setPlaceholderText('搜索用户名或昵称')
+        self.account_search.setClearButtonEnabled(True)
+        self.account_search.setMaximumWidth(230)
+        self.account_search.setToolTip('模糊筛选账号；隐藏的已勾选账号仍保留发送选择')
+        self.account_search.textChanged.connect(self.account_table.set_filter)
+        self.account_search.textChanged.connect(self._update_controls)
+        account_meta.addWidget(self.account_search)
         account_meta.addStretch(1)
         self._account_toolbar = QGridLayout()
         self._account_toolbar.setContentsMargins(0, 0, 0, 0)
@@ -480,6 +492,20 @@ class MainWindow(QMainWindow):
         self._size_account_table()
         QTimer.singleShot(0, self._fit_upper_content)
         self._update_controls()
+
+    @Slot(str, str)
+    def _save_account_remark(self, account_id: str, remark: str) -> None:
+        if self._closing or self.is_busy:
+            self.refresh_accounts()
+            return
+        try:
+            save_account_remark(self.paths.account_store, account_id, remark)
+            self.status_label.setText('账号备注已保存。')
+        except AccountEditError as exc:
+            self.status_label.setText(str(exc))
+        except Exception:
+            self.status_label.setText('账号备注保存失败，请检查账号文件。')
+        self.refresh_accounts()
 
     def _begin(self, phase):
         self._phase = phase

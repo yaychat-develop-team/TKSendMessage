@@ -29,6 +29,9 @@ from .models import AccountValidation
 _LOGIN_URL = "https://www.tiktok.com/login"
 _LOGIN_PREFIXES = ("/login", "/signup", "/passport", "/auth")
 _CRITICAL_COOKIE_NAMES = {"sessionid", "sessionid_ss", "sid_tt"}
+_WRITE_READY_COOKIE_NAMES = {
+    "s_v_web_id", "ttwid", "msToken", "odin_tt", "tt_csrf_token",
+}
 _LOGIN_STATE_READ_FAILURE_LIMIT = 10
 _BROWSER_OPERATION_TIMEOUT_SECONDS = 10
 _BROWSER_QUIT_TIMEOUT_SECONDS = 2
@@ -189,7 +192,25 @@ def _close_browser(browser: Any, *, local_port: int | None = None,
                 logger.warning('登录进程清理失败 | error_type={} | classification=browser_kill_failed',
                                type(exc).__name__)
         _, survivors = psutil.wait_procs(survivors, timeout=_BROWSER_QUIT_TIMEOUT_SECONDS)
-    closed = not survivors if owned else (browser is None or not _browser_is_alive(browser))
+    # DrissionPage's BrowserStates can remain stale after Chrome has closed,
+    # and on Windows a renderer/helper process may outlive the browser window.
+    # The login owns a dedicated local DevTools port, so use that endpoint as
+    # the authoritative signal that the interactive browser is gone. We have
+    # already attempted to reap every process tied to its profile and port.
+    debug_port_closed = (local_port is not None
+                         and not _debug_port_is_open(local_port))
+    if debug_port_closed:
+        closed = True
+        if survivors:
+            logger.warning('登录浏览器调试端口已关闭，仍有后台子进程退出中 '
+                           '| process_count={} | classification=browser_child_processes_remaining',
+                           len(survivors))
+    elif local_port is not None:
+        # An open endpoint means this login's browser may still be interactive,
+        # even when the driver or process enumeration could not confirm its PID.
+        closed = False
+    else:
+        closed = not survivors if owned else (browser is None or not _browser_is_alive(browser))
     if closed:
         logger.info('登录浏览器已关闭 | classification=browser_closed')
     else:
@@ -366,16 +387,19 @@ def has_critical_login_cookie(cookies: list[dict[str, Any]]) -> bool:
 
 def _complete_login_cookie_state(cookies: list[dict[str, Any]]) -> tuple:
     critical = _critical_login_cookies(cookies)
-    fingerprints = tuple(sorted(
+    write_ready = tuple(sorted(
         (cookie["name"], cookie["value"])
         for cookie in cookies
         if _is_tiktok_cookie(cookie)
-        and cookie.get("name") == "s_v_web_id"
+        and cookie.get("name") in _WRITE_READY_COOKIE_NAMES
         and isinstance(cookie.get("value"), str)
         and cookie["value"]
         and (cookie.get("expires", -1) == -1 or cookie.get("expires", 0) > time.time())
     ))
-    return critical + fingerprints if critical and fingerprints else ()
+    present_names = {name for name, _value in write_ready}
+    if not critical or not _WRITE_READY_COOKIE_NAMES <= present_names:
+        return ()
+    return critical + write_ready
 
 
 def has_complete_login_cookie(cookies: list[dict[str, Any]]) -> bool:
@@ -694,15 +718,44 @@ def login_new_account(
             _page_source(browser.latest_tab)
         )
         login_user_agent = read_browser_user_agent(browser)
-        ticket_guard_state = wait_for_ticket_guard_state(
+        initial_ticket_guard_state = wait_for_ticket_guard_state(
             browser, timeout_seconds=min(10, max(1, timeout_seconds)),
             cancel_event=cancel_event, local_port=local_port,
         )
         _check_login_active(browser, cancel_event, local_port)
-        logger.info('登录会话采集完成，{} 秒后关闭浏览器 | classification=login_capture_complete',
+        if not initial_ticket_guard_state:
+            raise _BrowserError("ticket_guard_unavailable")
+        logger.info('登录状态已确认，等待安全环境完成初始化 | delay_seconds={} '
+                    '| classification=login_initializing',
                     _LOGIN_SUCCESS_CLOSE_DELAY_SECONDS)
         _wait_for_login_poll(_LOGIN_SUCCESS_CLOSE_DELAY_SECONDS, cancel_event)
         _check_login_active(browser, cancel_event, local_port)
+        completed_tabs = [
+            candidate for candidate in _tabs(browser)
+            if _is_official_tiktok_url(str(getattr(candidate, "url", "")))
+            and not _is_login_url(str(getattr(candidate, "url", "")))
+        ]
+        capture_tab = completed_tabs[-1] if completed_tabs else browser.latest_tab
+        cookies = _browser_cookies(browser, capture_tab)
+        _check_login_active(browser, cancel_event, local_port)
+        if not _complete_login_cookie_state(cookies):
+            raise _BrowserError("login_cookie_incomplete")
+        final_ticket_guard_state = wait_for_ticket_guard_state(
+            browser, timeout_seconds=min(10, max(1, timeout_seconds)),
+            cancel_event=cancel_event, local_port=local_port,
+        )
+        _check_login_active(browser, cancel_event, local_port)
+        ticket_guard_state = final_ticket_guard_state or initial_ticket_guard_state
+        try:
+            ticket_guard_headers = build_headers_from_cookie_state(
+                cookie_header_from_playwright(cookies),
+                ticket_guard_state,
+                urlsplit(CHAT_URL).path,
+            )
+        except Exception:
+            raise _BrowserError("ticket_guard_unavailable") from None
+        logger.info('登录会话采集完成，正在关闭浏览器 | '
+                    'classification=login_capture_complete')
     finally:
         try:
             if on_browser_closing is not None:
@@ -731,27 +784,8 @@ def login_new_account(
         account["username"] = clean_username
     if clean_nickname:
         account["nickname"] = clean_nickname
-    if ticket_guard_state:
-        account["ticket_guard"] = ticket_guard_state
-        try:
-            account["ticket_guard_headers"] = build_headers_from_cookie_state(
-                cookie_header_from_playwright(cookies),
-                ticket_guard_state,
-                urlsplit(CHAT_URL).path,
-            )
-        except Exception:
-            account.pop("ticket_guard_headers", None)
-            logger.warning(
-                "Ticket Guard 请求头生成失败，未写入缓存 | "
-                "classification=ticket_guard_headers_unavailable"
-            )
-    else:
-        account.pop("ticket_guard", None)
-        account.pop("ticket_guard_headers", None)
-        logger.warning(
-            "未读取到动态 Ticket Guard 会话，消息发送将停止；请重新登录 | "
-            "classification=ticket_guard_state_missing"
-        )
+    account["ticket_guard"] = ticket_guard_state
+    account["ticket_guard_headers"] = ticket_guard_headers
     _raise_if_login_cancelled(cancel_event)
     if cancel_event is None:
         save_account_store_atomic(store_path, store)

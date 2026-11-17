@@ -73,7 +73,7 @@ python -c "from tiktok_live.browser_auth import login_new_account; from tiktok_l
 | 禁言报告 | `silenced_accounts.json` | `runtime/reports/silenced_accounts.json` |
 | 桌面轮转日志 | CLI 主要写终端 | `runtime/logs/desktop.log` |
 
-账号库原子写入，保存单个 Cookie 字符串与环境种子，并兼容旧 Cookie 对象数组。同一可确认 TikTok UID 更新而不重复追加；不能确认唯一 UID 时保留既有身份匹配规则。原项目、桌面和 CLI 不自动共享账号库。明确重新登录响应才删除对应账号；网络、风控或其他失败不会删号。损坏库明确报错并保持原文件，应先私下备份再恢复。
+账号库原子写入，保存单个 Cookie 字符串与环境种子，并兼容旧 Cookie 对象数组。同一可确认 TikTok UID 更新而不重复追加；不能确认唯一 UID 时保留既有身份匹配规则。原项目、桌面和 CLI 不自动共享账号库。明确重新登录响应会保留对应账号并标记登录失效，停止该账号后续发送；成功重新登录更新后恢复。网络、风控或其他失败不会因此标记失效或删号。损坏库明确报错并保持原文件，应先私下备份再恢复。
 
 正常完成的失败/禁言报告原子覆盖，分别使用 `{"failed_accounts": []}`、`{"silenced_accounts": []}` 表示无记录。早期错误或异常退出可能仍保留上轮报告；查看时间和日志。报告只保留短 ID、用户名、分类及禁言业务状态码，不含 Cookie。
 

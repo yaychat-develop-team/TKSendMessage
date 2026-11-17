@@ -26,7 +26,7 @@ from .account_store import (
     _numeric_tiktok_uids,
     cookie_header_from_playwright,
     load_account_store,
-    remove_account,
+    mark_login_expired,
     save_account_store_atomic,
 )
 from .browser_auth import login_new_account
@@ -518,6 +518,21 @@ def run_saved_accounts(
             "classification": classification,
         }
 
+    eligible_accounts = [account for account in store['accounts']
+                         if selected_account_ids is None or account['id'] in selected_ids]
+    for account in eligible_accounts:
+        if account.get('login_expired') is True:
+            counters['expired'] += 1
+            short_id = (account['id'][:12] if re.fullmatch(r'[a-f0-9]{64}', account['id'])
+                        else hashlib.sha256(account['id'].encode('utf-8')).hexdigest()[:12])
+            record_failed_account(account, short_id, 'expired')
+            logger.warning('账号登录失效，已跳过发送，请重新登录 | account_username={} | account_id={} '
+                           '| classification=expired', _clean_account_username(account.get('username')) or '-', short_id)
+    if counters['expired']:
+        publish_progress()
+    active_accounts = [account for account in eligible_accounts if account.get('login_expired') is not True]
+    if not active_accounts:
+        return snapshot()
     try:
         if observation_enabled:
             listener_kwargs = {}
@@ -533,7 +548,7 @@ def run_saved_accounts(
                 show_comments=show_live_comments_in_console,
                 heartbeat_interval_seconds=heartbeat_interval_seconds,
                 resolve_room_id=lambda: _resolve_observer_room_id(
-                    username, store['accounts'], selected_ids if selected_account_ids is not None else None,
+                    username, active_accounts, selected_ids if selected_account_ids is not None else None,
                     room_id_cookie, should_cancel,
                     connect_timeout=observer_connect_timeout_seconds),
                 **listener_kwargs,
@@ -575,6 +590,8 @@ def run_saved_accounts(
                 if _identities_match(_account_identity(account["cookies"]), new_identity)
             ]
         for index, account in enumerate(deepcopy(accounts_to_send), start=1):
+            if account.get('login_expired') is True:
+                continue
             if _cancel_requested(should_cancel):
                 break
             account_id = account["id"]
@@ -597,6 +614,26 @@ def run_saved_accounts(
             message_interval_seconds = max(0.1, float(message_interval_seconds))
             pending_messages = None
             batch_terminal = False
+            expiry_recorded = False
+            def record_login_expiry():
+                nonlocal expiry_recorded
+                if expiry_recorded:
+                    return
+                expiry_recorded = True
+                for saved_account in store['accounts']:
+                    if saved_account['id'] == account_id:
+                        mark_login_expired(saved_account)
+                save_completed_account_state()
+                counters['expired'] += 1
+                record_failed_account(account, short_id, 'expired')
+                logger.warning('账号登录失效，已保留账号并停止后续发送，请重新登录 | account_username={} '
+                               '| account_id={} | classification=expired',
+                               _clean_account_username(account.get('username')) or '-', short_id)
+                publish_progress()
+            def posted(number, result, started):
+                if isinstance(result, dict) and result.get('loginExpired') is True:
+                    record_login_expiry()
+                live.register(number, result, started, _numeric_tiktok_uids(account['cookies']))
             def stop_for_misses():
                 record_failed_account(account, short_id, 'consecutive_not_observed')
                 logger.warning('连续 3 条消息未观察到展示，停止该账号在本直播间的后续发送 | '
@@ -639,6 +676,7 @@ def run_saved_accounts(
                     retry_delay = max(0.0, float(observation_retry_delay_seconds))
                     send_attempt = 1
                     retry_message_request = None
+                    accepted_attempt_seen = False
                     stop_processing = False
                     while True:
                         if (send_cancelled() and
@@ -699,8 +737,7 @@ def run_saved_accounts(
                                             ),
                                             total_messages, message_interval_seconds, send_cancelled,
                                             attempts=attempt_limit, retry_delay=retry_delay,
-                                            on_posted=lambda number, result, started: live.register(
-                                                number, result, started, _numeric_tiktok_uids(account['cookies'])))
+                                            on_posted=posted)
                                         batch_terminal = any(terminal_failure(item[0]) or
                                             isinstance(item[0],Exception) and not transient_failure(item[0])
                                             for item in pending_messages)
@@ -738,6 +775,19 @@ def run_saved_accounts(
                                     _pause(retry_delay, should_cancel)
                                 if not _cancel_requested(should_cancel):
                                     continue
+                            if accepted_attempt_seen:
+                                counters["acceptedNotObserved"] += 1
+                                counters["success"] += 1
+                                record_failed_account(
+                                    account, short_id, "accepted_not_observed"
+                                )
+                                logger.warning(
+                                    "消息接口重试异常，保留前一次接口已接受/未观察到结果 | "
+                                    "account_index={} | account_id={} | "
+                                    "classification=accepted_not_observed",
+                                    index, short_id,
+                                )
+                                break
                             # Count this account once and continue without exposing exception content.
                             classification = exc.classification if isinstance(exc, SafeOperationError) else "send_exception"
                             counters["failed"] += 1
@@ -774,19 +824,14 @@ def run_saved_accounts(
                                 break
 
                         if result.get("loginExpired") is True:
-                            remove_account(store, account["id"])
-                            save_completed_account_state()
-                            counters["expired"] += 1
-                            record_failed_account(account, short_id, "expired")
+                            record_login_expiry()
                             display('send_failed', 'expired')
-                            logger.info(
-                                "账户发送完成 | account_index={} | account_id={} | classification=expired",
-                                index, short_id,
-                            )
                             break
 
                         succeeded = bool(result.get("ok"))
                         requires_observation = result.get("requiresObservation") is True
+                        if succeeded and not requires_observation:
+                            accepted_attempt_seen = True
                         classification = str(result.get("classification") or (
                             "success" if succeeded else "send_failed"
                         ))

@@ -11,7 +11,7 @@ ADD_NEW_ACCOUNT = False
 
 # username：目标主播用户名，不需要填写 @。
 # message：每个账号本轮要发送一次的消息内容。
-MANUAL_INPUT = {'username': 'stef_gamingg', 'message': '[sagemoney][sagemoney][sagemoney]'}
+MANUAL_INPUT = {'username': '', 'message': ''}
 
 # ==================== 可不动区域 ====================
 # 以下参数已有可用默认值，只有需要调整超时、频率或监听行为时再修改。

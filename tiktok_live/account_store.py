@@ -279,9 +279,19 @@ def upsert_account(store: dict[str, Any], cookies: list[dict[str, Any]], now: da
         store["accounts"] = [item for item in store["accounts"]
                              if item is account or all(item is not match for match in matches)]
     account.update(cookies=deepcopy(cookies), updated_at=timestamp)
+    for key in ('login_expired', 'login_expired_reason', 'login_expired_at'):
+        account.pop(key, None)
     if not isinstance(account.get("environment_seed"), str):
         account["environment_seed"] = environment_seed_for_account_id(account["id"])
     return account
+
+
+def mark_login_expired(account: dict) -> None:
+    """Persist only a safe diagnosis, never the raw response or credentials."""
+    account['login_expired'] = True
+    account['login_expired_reason'] = 'login_required'
+    if not account.get('login_expired_at'):
+        account['login_expired_at'] = datetime.now().astimezone().isoformat()
 
 
 def remove_account(store: dict[str, Any], account_id: str) -> bool:

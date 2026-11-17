@@ -8,7 +8,10 @@ from loguru import logger
 from ..config import browser_profile_from_user_agent
 from .protocol import _fields, _text
 from .sessions import validate_destination, validate_room_id
-from ..signing import browser_headers, parse_cookie_string, sign_url
+from ..signing import (
+    browser_headers, cookie_with_ms_token_fallback, parse_cookie_string,
+)
+from ..reference_signing import sign_url
 
 
 FETCH_USER_AGENT = (
@@ -23,11 +26,21 @@ FETCH_SCREEN_RESOLUTIONS = (
 )
 
 
-def _initial_fetch_params(room_id: str, user_agent: str) -> dict[str, object]:
+def _initial_fetch_params(
+    room_id: str, user_agent: str,
+    screen_size: tuple[int, int] | None = None,
+) -> dict[str, object]:
     room_id = validate_room_id(room_id)
     if not isinstance(user_agent, str) or not user_agent.startswith("Mozilla/") or len(user_agent) > 2048:
         raise ValueError("Invalid fetch user agent")
-    screen_width, screen_height = secrets.choice(FETCH_SCREEN_RESOLUTIONS)
+    if screen_size is None:
+        screen_width, screen_height = secrets.choice(FETCH_SCREEN_RESOLUTIONS)
+    else:
+        if (type(screen_size) is not tuple or len(screen_size) != 2
+                or any(type(value) is not int for value in screen_size)
+                or not all(100 <= value <= 10000 for value in screen_size)):
+            raise ValueError("Invalid fetch screen size")
+        screen_width, screen_height = screen_size
     return {
         # Initial HTTP fetch uses the webcast version once. Adding the legacy
         # 180800 value can reject otherwise identical room/account requests.
@@ -71,6 +84,8 @@ def build_initial_fetch_url(room_id: str, user_agent: str) -> str:
 def build_initial_fetch_request(
     session, *, device_id: str, ms_token: str,
     endpoint: str = "https://webcast.tiktok.com/webcast/im/fetch/",
+    signer=None, account_id: str | None = None,
+    screen_size: tuple[int, int] | None = None,
 ) -> tuple[str, dict[str, str]]:
     """Build one freshly signed fetch request without flattening the Cookie jar."""
     target = urlsplit(endpoint)
@@ -88,8 +103,19 @@ def build_initial_fetch_request(
             raise ValueError('Unexpected observer credentials')
     profile = browser_profile_from_user_agent(session.user_agent)
     unsigned = endpoint + "?" + urlencode(
-        _initial_fetch_params(session.room_id, session.user_agent), doseq=True)
-    signed = sign_url(unsigned, ms_token, user_agent=session.user_agent)
+        _initial_fetch_params(
+            session.room_id, session.user_agent, screen_size,
+        ), doseq=True,
+    )
+    if signer is None:
+        signed = sign_url(unsigned, ms_token, user_agent=session.user_agent)
+    else:
+        if not account_id:
+            raise ValueError("Invalid signing account")
+        signed = signer.sign(
+            unsigned, account_id=account_id, room_id=session.room_id,
+            query_token=ms_token, operation="initial_fetch",
+        )
     headers = browser_headers({
         "accept": "*/*",
         "origin": "https://www.tiktok.com",
@@ -108,14 +134,22 @@ def fetch_initial_response(
     http_session, session, *, device_id: str, ms_token: str,
     endpoint: str = "https://webcast.tiktok.com/webcast/im/fetch/",
     timeout_seconds: float = 20,
+    signer=None, account_id: str | None = None,
+    screen_size: tuple[int, int] | None = None,
 ) -> "InitialFetch":
     """Fetch and decode a bounded first-party protobuf response."""
     if not 0 < float(timeout_seconds) <= 60:
         raise ValueError("Invalid initial fetch timeout")
     url, headers = build_initial_fetch_request(
-        session, device_id=device_id, ms_token=ms_token, endpoint=endpoint)
-    cookies = parse_cookie_string(session.cookie_header)
-    cookies["msToken"] = ms_token
+        session, device_id=device_id, ms_token=ms_token, endpoint=endpoint,
+        signer=signer, account_id=account_id, screen_size=screen_size)
+    # The browser can send more than one scoped msToken while the signed query
+    # uses the freshly issued report token.  A dict cookie jar would collapse
+    # duplicate names and incorrectly force both channels to the same value.
+    headers = dict(headers)
+    headers["cookie"] = cookie_with_ms_token_fallback(
+        session.cookie_header, ms_token,
+    )
     raw = bytearray()
 
     def receive(chunk):
@@ -125,7 +159,7 @@ def fetch_initial_response(
         return len(chunk)
 
     response = http_session.get(
-        url, headers=headers, cookies=cookies, timeout=timeout_seconds,
+        url, headers=headers, timeout=timeout_seconds,
         allow_redirects=False, content_callback=receive,
     )
     content_type = str(response.headers.get("content-type", "")).split(";", 1)[0].lower()

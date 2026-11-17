@@ -17,9 +17,11 @@ __all__ = [
     "generate_x_dynosaur",
 ]
 
-EX_VERSION = "1.0.0.2717"
+EX_VERSION = "1.0.0.2982"
+PROTOCOL_MARKER = 0x41
 SCM_VERSION = "1.0.0.417"
 SDK_VERSION = "5.3.2"
+WEBMSSDK_MARKER = 73
 GNARLY_ALPHABET = "u09tbS3UvgDEe6r-ZVMXzLpsAohTn7mdINQlW412GqBjfYiyk8JORCF5/xKHwacP"
 RISK_KEYS = {"msToken", "X-Dynosaur", "X-Bogus", "X-Gnarly"}
 OUTPUT_SIGN_KEYS = {"X-Bogus", "X-Gnarly"}
@@ -46,10 +48,10 @@ _DYNOSAUR_SESSION_CONTEXT = {
     "field40": 476443666,
     "field47": 72,
     "field50": EX_VERSION,
-    "field51": "e654a84f2341b6252f44cc551a72c780",
+    "field51": "3142b7a7f3ac9b8150f994835ba3173a",
     "field52": 1881297863,
-    "field54": 8,
-    "field56": bytes.fromhex("66a320f1"),
+    "field54": 14,
+    "field56": bytes.fromhex("e05ecf09"),
 }
 
 _DYNOSAUR_REPORT_CONTEXT = {
@@ -59,13 +61,14 @@ _DYNOSAUR_REPORT_CONTEXT = {
 }
 
 _DYNOSAUR_WEBCAST_ROOM_ENTER_CONTEXT = {
-    "field32_seed": 210,
+    "field32_seed": 222,
     "field37": 1,
     "field40": 0,
     "field47": 2,
     "field50": bytes.fromhex("dbdedfe00001"),
     "field51": bytes.fromhex("dbdedfe00001"),
-    "field52": 2072048768,
+    "field44": 2386237635,
+    "field52": 1058811184,
     "field54": 14,
     "field56": bytes.fromhex("811c9dc4"),
 }
@@ -306,7 +309,7 @@ def _dynosaur_tlv(tag: int, value: bytes) -> bytes:
 
 def _dynosaur_perf_field(timestamp: int, field52: int) -> int:
     return (
-        0x10000
+        (WEBMSSDK_MARKER << 16)
         | ((timestamp & 0xFFFF) ^ ((timestamp >> 16) & 0xFFFF) ^ (field52 & 0xFFFF) ^ ((field52 >> 16) & 0xFFFF))
     ) & 0xFFFFFFFF
 
@@ -327,7 +330,7 @@ def build_x_dynosaur_payload(
     body: str | bytes | None = None,
     context: dict[str, Any] | None = None,
 ) -> bytes:
-    """webmssdk_ex 1.0.0.2717 的 25 个顺序 TLV（tag 32..56）。"""
+    """webmssdk_ex 1.0.0.2982 的 25 个顺序 TLV（tag 32..56）。"""
     timestamp = int(time.time()) if ts is None else int(ts)
     cfg = {**_DYNOSAUR_SESSION_CONTEXT, **(context or {})}
     field51 = cfg["field51"]
@@ -346,7 +349,7 @@ def build_x_dynosaur_payload(
         35: zero,
         36: _dynosaur_string(_dynosaur_perf_field(timestamp, int(cfg["field52"]))),
         37: _dynosaur_string(int(cfg["field37"])),
-        38: _dynosaur_string(1),
+        38: _dynosaur_string(WEBMSSDK_MARKER),
         39: _dynosaur_string(timestamp),
         40: _dynosaur_string(int(cfg["field40"])),
         41: zero,

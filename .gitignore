@@ -1,8 +1,15 @@
 __pycache__/
 *.py[cod]
 .pytest_cache/
-tiktok_accounts.json
-tiktok_accounts.json.tmp
+# Account stores and runtime reports may contain authentication material.
+**/tiktok_accounts.json
+**/tiktok_accounts.json.tmp
+**/failed_accounts.json
+**/silenced_accounts.json
+**/desktop-settings.json
+**/profiles/
+**/reports/
+**/logs/
 
 port/
 runtime/
@@ -10,6 +17,12 @@ js_reverse_cache/
 browser/chromium/
 dist/
 build/work/
+build/source_backups/
+build/scheduled_account_tests/
+build/*_2026*/
+build/rea_*.json
+build/diagnose_*.py
+build/probe_*.py
 
 # Local diagnostics, credentials, generated packages and development environments.
 .codex_tmp/
@@ -22,6 +35,8 @@ venv/
 !.env.example
 *.pem
 *.key
+*.p12
+*.pfx
 *.log
 releases/
 dist-macos/

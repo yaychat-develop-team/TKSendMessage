@@ -8,7 +8,7 @@ import re
 import secrets
 import time
 from typing import Any, Callable
-from urllib.parse import quote, unquote, urlencode, urlsplit
+from urllib.parse import parse_qsl, quote, unquote, urlencode, urlsplit
 
 from curl_cffi import requests
 from curl_cffi.requests.exceptions import (
@@ -21,7 +21,7 @@ from .account_store import (
     account_id_from_cookies,
     environment_seed_for_account_id,
 )
-from .algorithms.ms_token import build_ms_token_report_json, generate_ms_seed_token
+from .algorithms.reference_ms_token import build_ms_token_report_json, generate_ms_seed_token
 from .algorithms.ticket_guard import build_headers_from_cookie_state
 from .errors import SafeOperationError
 from .room_state import extract_bound_room_state, room_state_flags
@@ -29,7 +29,7 @@ from .heartbeat import room_heartbeat
 from .wss.initial_fetch import fetch_initial_response
 from .wss.sessions import prepare_account
 from .retry_policy import RetryableMessageError, transient_failure
-from .request_fingerprint import request_flow, current_fingerprint
+from .request_fingerprint import request_flow
 from .config import (
     CHAT_URL, ENTER_URL, CHROME_BROWSER_PROFILES, DEFAULT_BROWSER_PROFILE, MS_TOKEN_URL,
     ROOM_ID_COOKIE, BrowserProfile, browser_profile_from_user_agent,
@@ -37,10 +37,13 @@ from .config import (
 from .signing import (
     browser_headers,
     build_ms_token_environment,
+    cookie_with_ms_token_fallback,
     cookie_with_ms_token,
+    first_saved_ms_token,
     parse_cookie_string,
-    sign_url,
 )
+from .reference_signing import sign_url
+from .signing_session import SigningSession, create_sdk_state
 
 def choose_browser_profile() -> BrowserProfile:
     return secrets.choice(CHROME_BROWSER_PROFILES)
@@ -68,14 +71,31 @@ _SENSITIVE_RESPONSE_TEXT = re.compile(
 _PRE_SEND_RETRY_DELAYS_SECONDS = (2.0, 2.0, 2.0)
 
 
-def _run_pre_send_with_retry(stage: str, operation: Callable[[], Any]) -> Any:
+class _RoomEnterForbidden(SafeOperationError):
+    def __init__(self) -> None:
+        super().__init__("room_enter_unavailable")
+
+
+def _run_pre_send_with_retry(
+    stage: str, operation: Callable[[], Any], *,
+    checkpoint: Callable[[], Any] | None = None,
+    restore: Callable[[Any], None] | None = None,
+) -> Any:
     """Run a safe pre-send operation and retry up to three times."""
-    for retry_index, delay_seconds in enumerate(
-        _PRE_SEND_RETRY_DELAYS_SECONDS, start=1
-    ):
+    if (checkpoint is None) != (restore is None):
+        raise ValueError("checkpoint and restore must be supplied together")
+    attempts = (*_PRE_SEND_RETRY_DELAYS_SECONDS, None)
+    for retry_index, delay_seconds in enumerate(attempts, start=1):
+        saved_state = checkpoint() if checkpoint is not None else None
         try:
             return operation()
+        except _RoomEnterForbidden:
+            raise
         except Exception:
+            if restore is not None:
+                restore(saved_state)
+            if delay_seconds is None:
+                raise
             logger.warning(
                 "发送前请求失败，准备重试 | stage={} | retry={}/{} | delay_seconds={}",
                 stage,
@@ -84,7 +104,7 @@ def _run_pre_send_with_retry(stage: str, operation: Callable[[], Any]) -> Any:
                 delay_seconds,
             )
             time.sleep(delay_seconds)
-    return operation()
+    raise AssertionError("unreachable")
 
 
 def _safe_response_for_log(value: Any) -> Any:
@@ -162,35 +182,49 @@ def log_send_result(result: dict[str, Any], http_status: int | None) -> None:
 
 def get_fresh_ms_token(
     session: requests.Session, *, cookie: str = "",
-    profile: BrowserProfile | None = None, timeout_seconds: float = 30,
+    signer: SigningSession, timeout_seconds: float = 30,
+    environment_plaintext: str | None = None,
 ) -> str:
-    profile = _request_profile(profile)
+    profile = signer.profile
     cookie_values = parse_cookie_string(cookie)
-    try:
-        account_id = account_id_from_cookies(_cookie_records_from_header(cookie))
-    except ValueError:
-        account_id = hashlib.sha256(str(cookie or "").encode("utf-8")).hexdigest()
-    environment_seed = environment_seed_for_account_id(account_id)
-    seed = generate_ms_seed_token()
-    body = build_ms_token_report_json(
-        user_agent=profile.user_agent,
-        env_plaintext=build_ms_token_environment(
+    for name, value in cookie_values.items():
+        session.cookies.jar.set_cookie(Cookie(
+            0, name, value, None, False, ".tiktok.com", True, True,
+            "/", True, True, None, True, None, None, {}, False,
+        ))
+    if environment_plaintext is None:
+        try:
+            account_id = account_id_from_cookies(_cookie_records_from_header(cookie))
+        except ValueError:
+            account_id = hashlib.sha256(str(cookie or "").encode("utf-8")).hexdigest()
+        environment_seed = environment_seed_for_account_id(account_id)
+        environment_plaintext = build_ms_token_environment(
             user_agent=profile.user_agent,
             account_seed=environment_seed,
             ttwid=cookie_values.get("ttwid", ""),
-        ),
+            page_url=signer.page_url,
+        )
+    seed = generate_ms_seed_token()
+    session.cookies.jar.set_cookie(Cookie(
+        0, "msToken", seed, None, False, ".tiktok.com", True, True,
+        "/", True, True, None, True, None, None, {}, False,
+    ))
+    body = build_ms_token_report_json(
+        user_agent=profile.user_agent,
+        env_plaintext=environment_plaintext,
     )
-    report_url = sign_url(
-        f"{MS_TOKEN_URL}?msToken={seed}", seed, body, user_agent=profile.user_agent
+    report_url = signer.sign(
+        f"{MS_TOKEN_URL}?msToken={seed}",
+        account_id=signer.account_id, room_id=None, query_token=seed,
+        body=body, operation="report",
     )
     response = session.post(
         report_url,
         data=body,
         headers=browser_headers({
             "content-type": "text/plain;charset=UTF-8",
-            "cookie": f"msToken={seed}",
             "origin": "https://www.tiktok.com",
-            "referer": "https://www.tiktok.com/",
+            "referer": signer.page_url,
         }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua),
         timeout=timeout_seconds,
     )
@@ -199,21 +233,54 @@ def get_fresh_ms_token(
         match = re.search(r"(?:^|[,;]\s*)msToken=([^;,]+)", response.headers.get("set-cookie", ""))
         token = match.group(1) if match else None
     if not token:
+        response_headers = sorted(str(name).lower() for name in response.headers)
+        content_type = str(response.headers.get("content-type", "")).split(";", 1)[0]
+        response_size = len(getattr(response, "content", b"") or b"")
+        logger.warning(
+            "msToken 刷新响应无有效 Token | http_status={} | content_type={} | "
+            "response_size={} | response_headers={}",
+            getattr(response, "status_code", None), content_type or "-",
+            response_size, response_headers,
+        )
         raise RuntimeError("/web/report 没有返回新的 msToken")
-    return str(token)
+    token = str(token)
+    session.cookies.jar.set_cookie(Cookie(
+        0, "msToken", token, None, False, ".tiktok.com", True, True,
+        "/", True, True, None, True, None, None, {}, False,
+    ))
+    return token
 
 
 def get_sec_sdk_csrf_token(
-    session: requests.Session, cookie: str, *, profile: BrowserProfile | None = None
+    session: requests.Session, cookie: str, *,
+    referer: str = "https://www.tiktok.com/",
+    profile: BrowserProfile | None = None,
 ) -> str | None:
     profile = _request_profile(profile)
+    preflight = session.options(
+        CHAT_URL,
+        headers=browser_headers({
+            "accept": "*/*",
+            "access-control-request-headers":
+                "x-secsdk-csrf-request,x-secsdk-csrf-version",
+            "access-control-request-method": "HEAD",
+            "origin": "https://www.tiktok.com",
+            "referer": referer,
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+        }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua),
+        timeout=30,
+    )
+    if preflight.status_code != 200:
+        return None
     response = session.head(
         CHAT_URL,
         headers=browser_headers({
             "accept": "*/*",
             "cookie": cookie,
             "origin": "https://www.tiktok.com",
-            "referer": "https://www.tiktok.com/",
+            "referer": referer,
             "x-secsdk-csrf-request": "1",
             "x-secsdk-csrf-version": "1.2.22",
         }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua),
@@ -223,9 +290,15 @@ def get_sec_sdk_csrf_token(
     if not raw:
         return None
     parts = [part.strip() for part in raw.split(",")]
-    if len(parts) >= 5 and parts[0] == "1":
-        return f"{parts[1]},{parts[-1]}"
-    return raw.split(",", 1)[-1].strip()
+    # SecSDK 1.2.22 response format:
+    # [statusCode, token, maxAge, message, sessionId].  A successful browser
+    # sends the request token and session ID together in the chat header.
+    # It uses the literal downgrade token when KMS/token bootstrap fails.
+    if len(parts) >= 5:
+        if parts[0] == "0" and parts[1]:
+            return ",".join(value for value in (parts[1], parts[4]) if value)
+        return "DOWNGRADE"
+    return None
 
 
 def extract_room_id(source: str) -> str | None:
@@ -439,16 +512,19 @@ def request_live_room(
     state = extract_bound_room_state(html, clean_username)
     if state is None:
         room_id = extract_room_id(html)
+        owner_id = None
         resolved_username, nickname = extract_live_identity(html)
         status, is_live = None, None
     else:
         room_id = state["roomId"]
+        owner_id = state.get("ownerId")
         resolved_username, nickname = state["username"], state["nickname"]
         status, is_live = state["liveStatus"], state["isLive"]
     account_username, account_nickname = extract_current_account_identity(html)
     return {
         "exists": bool(room_id),
         "roomId": room_id,
+        "ownerId": owner_id,
         "username": resolved_username or clean_username,
         "nickname": nickname or "-",
         "accountUsername": account_username,
@@ -693,10 +769,37 @@ def build_chat_request(
     now_ms: int | None = None,
     *,
     profile: BrowserProfile | None = None,
+    region: str | None = None,
+    environment_plaintext: str | None = None,
+    history_len: int | None = None,
 ) -> tuple[str, bytes]:
     profile = _request_profile(profile)
     timestamp = int(now_ms if now_ms is not None else time.time() * 1000)
-    region = cookies.get("store-country-code", "SG").upper()
+    if history_len is None:
+        # TikTok's web common parameter is window.history.length.  It is not
+        # the number of historical chat messages decoded from room/fetch.
+        # This protocol flow opens one canonical live page.
+        history_len = 1
+    if type(history_len) is not int or not 0 <= history_len <= 100000:
+        raise ValueError("Invalid chat history length")
+    request_region = str(
+        region or cookies.get("store-country-code") or "SG"
+    ).upper()
+    if not re.fullmatch(r"[A-Z]{2}", request_region):
+        request_region = "SG"
+    screen_width, screen_height = 1707, 1067
+    if environment_plaintext is not None:
+        try:
+            environment = json.loads(environment_plaintext)
+            screen_width = int(environment["screen"]["sizeWidth"])
+            screen_height = int(environment["screen"]["sizeHeight"])
+        except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+            raise ValueError("signing_state_unsupported") from None
+        if not (100 <= screen_width <= 10000
+                and 100 <= screen_height <= 10000):
+            raise ValueError("signing_state_unsupported")
+    # TikTok currently accepts the desktop tool flow only when the comment
+    # fields are mirrored in its JSON body as well as the query.
     body = json.dumps({
         "room_id": str(room_id),
         "content": str(message),
@@ -724,18 +827,18 @@ def build_chat_request(
         "emotes_with_index": "",
         "focus_state": "true",
         "from_page": "",
-        "history_len": "1",
+        "history_len": str(history_len),
         "input_type": "0",
         "is_fullscreen": "false",
         "is_page_visible": "true",
         "os": "windows",
-        "priority_region": region,
+        "priority_region": request_region,
         "referer": referer,
-        "region": region,
+        "region": request_region,
         "room_id": str(room_id),
-        "root_referer": "https://www.tiktok.com/",
-        "screen_height": "1067",
-        "screen_width": "1707",
+        "root_referer": "",
+        "screen_height": str(screen_height),
+        "screen_width": str(screen_width),
         "tz_name": "Asia/Shanghai",
         "user_is_login": "true",
         "webcast_language": "zh-Hans",
@@ -743,6 +846,135 @@ def build_chat_request(
     if cookies.get("s_v_web_id"):
         params["verifyFp"] = cookies["s_v_web_id"]
     return f"{CHAT_URL}?{urlencode(params, doseq=True)}", body
+
+
+def build_epiphron_request(
+    cookies: dict[str, str],
+    device_id: str,
+    referer: str,
+    *,
+    profile: BrowserProfile | None = None,
+    region: str | None = None,
+    environment_plaintext: str | None = None,
+    history_len: int | None = None,
+) -> str:
+    """Build the feature-upload query emitted before a web comment."""
+    chat_url, _ = build_chat_request(
+        "0", "", cookies, device_id, referer, profile=profile,
+        region=region, environment_plaintext=environment_plaintext,
+        history_len=history_len,
+    )
+    parts = urlsplit(chat_url)
+    chat_only = {
+        "client_start_timestamp_millisecond", "content",
+        "emotes_with_index", "input_type", "room_id",
+    }
+    params = [
+        (name, value)
+        for name, value in parse_qsl(parts.query, keep_blank_values=True)
+        if name not in chat_only
+    ]
+    return (
+        "https://webcast.tiktok.com/webcast/epiphron/feature/upload/?"
+        + urlencode(params, doseq=True)
+    )
+
+
+def _browser_pre_comment_params(
+    cookies: dict[str, str],
+    device_id: str,
+    referer: str,
+    *,
+    profile: BrowserProfile | None = None,
+    region: str | None = None,
+    environment_plaintext: str | None = None,
+) -> list[tuple[str, str]]:
+    base = build_epiphron_request(
+        cookies, device_id, referer, profile=profile, region=region,
+        environment_plaintext=environment_plaintext, history_len=1,
+    )
+    return parse_qsl(urlsplit(base).query, keep_blank_values=True)
+
+
+def build_browser_check_alive_request(
+    room_id: str,
+    cookies: dict[str, str],
+    device_id: str,
+    referer: str,
+    *,
+    profile: BrowserProfile | None = None,
+    region: str | None = None,
+    environment_plaintext: str | None = None,
+) -> str:
+    params = _browser_pre_comment_params(
+        cookies, device_id, referer, profile=profile, region=region,
+        environment_plaintext=environment_plaintext,
+    )
+    params.append(("room_ids", str(room_id)))
+    return (
+        "https://webcast.tiktok.com/webcast/room/check_alive/?"
+        + urlencode(params, doseq=True)
+    )
+
+
+def build_browser_event_feed_request(
+    cookies: dict[str, str],
+    device_id: str,
+    referer: str,
+    *,
+    profile: BrowserProfile | None = None,
+    region: str | None = None,
+    environment_plaintext: str | None = None,
+) -> str:
+    params = _browser_pre_comment_params(
+        cookies, device_id, referer, profile=profile, region=region,
+        environment_plaintext=environment_plaintext,
+    )
+    params.extend((("count", "5"), ("query_type", "3")))
+    return (
+        "https://www.tiktok.com/tiktok/event/feed/v1?"
+        + urlencode(params, doseq=True)
+    )
+
+
+def _active_tiktok_user_id(cookies: dict[str, str]) -> str | None:
+    decoded = unquote(str(cookies.get("multi_sids") or ""))
+    entries = re.findall(r"(?:^|,)\s*(\d{5,30}):([^,;]+)", decoded)
+    active_sid = str(cookies.get("sessionid") or cookies.get("sessionid_ss")
+                     or cookies.get("sid_tt") or "")
+    if active_sid:
+        matched = [user_id for user_id, sid in entries if sid == active_sid]
+        if len(set(matched)) == 1:
+            return matched[0]
+    user_ids = {user_id for user_id, _ in entries}
+    return next(iter(user_ids)) if len(user_ids) == 1 else None
+
+
+def build_epiphron_body(
+    room_id: str,
+    owner_id: str,
+    user_id: str,
+    device_id: str,
+    *,
+    now_ms: int | None = None,
+    watch_duration_ms: int = 30000,
+) -> bytes:
+    """Serialize the browser's dynamic Epiphron feature payload."""
+    timestamp = int(time.time() * 1000) if now_ms is None else int(now_ms)
+    watched = max(30000, int(watch_duration_ms))
+    duration_bucket = watched // 30000 * 30000
+    payload = {
+        "base_info": {
+            "room_id": str(room_id),
+            "owner_id": str(owner_id),
+            "user_id": str(user_id),
+            "local_timeregi_stamp": str(timestamp),
+            "device_id": str(device_id),
+            "durationc": str(duration_bucket),
+        },
+        "biz_params": {"webapp_watch_duration": str(watched)},
+    }
+    return json.dumps(payload, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
 
 
 def enter_live_room(
@@ -753,7 +985,10 @@ def enter_live_room(
     runtime_cookie: str,
     ms_token: str,
     profile: BrowserProfile,
-) -> None:
+    *,
+    signer: SigningSession | None = None,
+    account_id: str | None = None,
+) -> dict[str, str]:
     """Perform the page's HTTP room entry before starting chat transport."""
     region = str(room.get("region") or cookies.get("store-country-code") or "SG").upper()
     if not re.fullmatch(r"[A-Z]{2}", region):
@@ -776,16 +1011,16 @@ def enter_live_room(
         "device_type": "web_h265",
         "focus_state": "true",
         "from_page": "",
-        "history_len": "2",
+        "history_len": "7",
         "is_fullscreen": "false",
         "is_page_visible": "true",
         "os": "windows",
         "priority_region": region,
-        "referer": "",
+        "referer": room["url"],
         "region": region,
-        "root_referer": "",
-        "screen_height": "1067",
-        "screen_width": "1707",
+        "root_referer": "https://www.tiktok.com/",
+        "screen_height": "1080",
+        "screen_width": "1920",
         "tz_name": "Asia/Shanghai",
         "user_is_login": "true",
     }
@@ -795,7 +1030,10 @@ def enter_live_room(
     # Keep the exact form order used by the standalone, known-good API
     # example.  The signature hashes these bytes, so request construction and
     # signing must share this one encoded value.
-    body = urlencode({"room_id": room["roomId"], "enter_source": "others-others"}, doseq=True).encode("utf-8")
+    body = urlencode({
+        "enter_source": "others-others",
+        "room_id": room["roomId"],
+    }, doseq=True).encode("utf-8")
     url = f"{ENTER_URL}?{urlencode(params, doseq=True)}"
     headers = browser_headers({
         "accept": "*/*",
@@ -808,11 +1046,19 @@ def enter_live_room(
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-site",
     }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua)
+    if signer is None:
+        signed_url = sign_url(url, ms_token, body, user_agent=profile.user_agent)
+    else:
+        if not account_id:
+            raise ValueError("Invalid signing identity")
+        signed_url = signer.sign(
+            url, account_id=account_id, room_id=str(room["roomId"]),
+            query_token=ms_token, body=body, operation="enter",
+        )
     response = session.post(
-        sign_url(url, ms_token, body, user_agent=profile.user_agent),
+        signed_url,
         data=body,
         headers=headers,
-        cookies=parse_cookie_string(cookie_with_ms_token(runtime_cookie, ms_token)),
         timeout=30,
     )
     try:
@@ -821,11 +1067,61 @@ def enter_live_room(
     except (TypeError, ValueError, AttributeError):
         accepted = False
     if not accepted:
-        logger.warning("HTTP 进入直播间未成功 | room_id={} | http_status={}",
-                       room["roomId"], response.status_code)
+        response_headers = sorted(str(name).lower() for name in response.headers)
+        content_type = str(response.headers.get("content-type", "")).split(";", 1)[0]
+        response_size = len(getattr(response, "content", b"") or b"")
+        logger.warning(
+            "HTTP 进入直播间未成功 | room_id={} | http_status={} | "
+            "content_type={} | response_size={} | response_headers={}",
+            room["roomId"], response.status_code, content_type or "-",
+            response_size, response_headers,
+        )
+        if response.status_code == 403:
+            raise _RoomEnterForbidden()
         raise SafeOperationError("room_enter_unavailable")
     logger.info("HTTP 进入直播间成功 | room_id={} | http_status={}",
                 room["roomId"], response.status_code)
+    cookie_jar = getattr(session, "cookies", None)
+    session_updates = (
+        cookie_jar.get_dict()
+        if cookie_jar is not None and hasattr(cookie_jar, "get_dict")
+        else {}
+    )
+    return {
+        str(name): str(value)
+        for name, value in session_updates.items()
+        if str(name or "").strip() and str(value or "").strip()
+    }
+
+
+def _merge_runtime_cookie(cookie: str, updates: dict[str, str]) -> str:
+    values: list[tuple[str, str]] = []
+    for part in str(cookie or "").split(";"):
+        item = part.strip()
+        if not item or "=" not in item:
+            continue
+        name, value = item.split("=", 1)
+        name = name.strip()
+        if name:
+            values.append((name, value.strip()))
+    for raw_name, raw_value in updates.items():
+        name = str(raw_name or "").strip()
+        value = str(raw_value or "").strip()
+        if (name and value
+                and re.fullmatch(r"[!#$%&'*+\-.^_`|~0-9A-Za-z]+", name)
+                and not re.search(r"[;\r\n]", value)):
+            matching = [index for index, item in enumerate(values)
+                        if item[0] == name]
+            # msToken has independent scoped values in the browser.  The
+            # report token belongs in the signed query, not in this flattened
+            # Cookie header.
+            if name == "msToken" and matching:
+                continue
+            if matching:
+                values[matching[-1]] = (name, value)
+            else:
+                values.append((name, value))
+    return "; ".join(f"{name}={value}" for name, value in values)
 
 
 def interpret_chat_response(payload: dict[str, Any]) -> dict[str, Any]:
@@ -908,14 +1204,31 @@ def post_chat_request(
     profile: BrowserProfile | None = None,
     ticket_guard_state: dict[str, str] | None = None,
     ticket_guard_headers: dict[str, str] | None = None,
+    signer=None,
+    account_id: str | None = None,
+    room_id: str | None = None,
 ) -> requests.Response:
     profile = _request_profile(profile)
+    effective_cookie = cookie_with_ms_token_fallback(cookie, ms_token)
+    cookie_jar = getattr(session, "cookies", None)
+    session_updates = (
+        cookie_jar.get_dict()
+        if cookie_jar is not None and hasattr(cookie_jar, "get_dict")
+        else {}
+    )
+    if session_updates:
+        # The CSRF HEAD response creates/rotates csrf_session_id.  An explicit
+        # Cookie header suppresses the session jar, so merge the latest
+        # same-session values before the chat POST just as the browser does.
+        effective_cookie = _merge_runtime_cookie(
+            effective_cookie, session_updates,
+        )
     headers = browser_headers({
         "accept": "*/*",
         "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en-GB;q=0.7,en;q=0.6",
         "cache-control": "no-cache",
         "content-type": "application/json; charset=UTF-8",
-        "cookie": cookie_with_ms_token(cookie, ms_token),
+        "cookie": effective_cookie,
         "origin": "https://www.tiktok.com",
         "pragma": "no-cache",
         "priority": "u=1, i",
@@ -924,27 +1237,221 @@ def post_chat_request(
         "sec-fetch-mode": "cors",
         "sec-fetch-site": "same-site",
     }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua)
-    # Cached client-data binds an old timestamp. Re-sign every POST, including
-    # retries; never fall back to replaying stored request headers.
+    # The browser preflight and POST include the freshly signed Ticket Guard
+    # client-data together with its public key/version headers.
     if ticket_guard_state:
         try:
-            headers.update(build_headers_from_cookie_state(
-                cookie, ticket_guard_state, urlsplit(url).path,
-            ))
+            ticket_headers = build_headers_from_cookie_state(
+                effective_cookie, ticket_guard_state, urlsplit(url).path,
+            )
+            headers.update(ticket_headers)
         except Exception:
             raise SafeOperationError("ticket_guard_unavailable") from None
     else:
         raise SafeOperationError("ticket_guard_unavailable")
-    cookies = parse_cookie_string(cookie)
-    if cookies.get("tt_csrf_token"):
-        headers["tt-csrf-token"] = cookies["tt_csrf_token"]
     if csrf_token:
         headers["x-secsdk-csrf-token"] = csrf_token
-    return session.post(
-        sign_url(url, ms_token, body, user_agent=profile.user_agent),
-        data=body,
-        headers=headers,
+    signature_body = body or None
+    if signer is None:
+        signed_url = sign_url(
+            url, ms_token, signature_body, user_agent=profile.user_agent
+        )
+    else:
+        if not account_id or not room_id:
+            raise ValueError("Invalid signing identity")
+        signed_url = signer.sign(
+            url, account_id=account_id, room_id=room_id,
+            query_token=ms_token, body=signature_body, operation="chat",
+        )
+    requested_header_names = [
+        name for name in (
+            "content-type",
+            "tt-ticket-guard-client-data",
+            "tt-ticket-guard-iteration-version",
+            "tt-ticket-guard-public-key",
+            "tt-ticket-guard-version",
+            "tt-ticket-guard-web-version",
+            "x-secsdk-csrf-token",
+        )
+        if name in {header_name.lower() for header_name in headers}
+    ]
+    preflight = session.options(
+        signed_url,
+        headers=browser_headers({
+            "accept": "*/*",
+            "access-control-request-headers": ",".join(requested_header_names),
+            "access-control-request-method": "POST",
+            "origin": "https://www.tiktok.com",
+            "priority": "u=1, i",
+            "referer": referer,
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+        }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua),
         timeout=30,
+    )
+    if preflight.status_code != 200:
+        raise SafeOperationError("chat_preflight_unavailable")
+    request_options = {"headers": headers, "timeout": 30}
+    if body:
+        request_options["data"] = body
+    return session.post(signed_url, **request_options)
+
+
+def post_epiphron_feature(
+    session: requests.Session,
+    url: str,
+    cookie: str,
+    ms_token: str,
+    referer: str,
+    *,
+    profile: BrowserProfile | None = None,
+    signer: SigningSession,
+    account_id: str,
+    room_id: str,
+    body: bytes = b"{}",
+) -> requests.Response:
+    """Replay the browser's JSON-object Epiphron step in the signing session."""
+    profile = _request_profile(profile)
+    page_header_referer = "https://www.tiktok.com/"
+    signed_url = signer.sign(
+        url, account_id=account_id, room_id=room_id,
+        query_token=ms_token, body=body, operation="epiphron",
+    )
+    preflight = session.options(
+        signed_url,
+        headers=browser_headers({
+            "accept": "*/*",
+            "access-control-request-headers": "content-type",
+            "access-control-request-method": "POST",
+            "origin": "https://www.tiktok.com",
+            "referer": page_header_referer,
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+        }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua),
+        timeout=30,
+    )
+    logger.info(
+        "Epiphron 预检响应 | endpoint=/webcast/epiphron/feature/upload/ "
+        "| http_status={} | classification=epiphron_preflight_response",
+        preflight.status_code,
+    )
+    if preflight.status_code != 200:
+        raise SafeOperationError("epiphron_preflight_unavailable")
+    response = session.post(
+        signed_url,
+        data=body,
+        headers=browser_headers({
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en-GB;q=0.7,en;q=0.6",
+            "cache-control": "no-cache",
+            "content-type": "application/json",
+            "cookie": cookie_with_ms_token_fallback(cookie, ms_token),
+            "origin": "https://www.tiktok.com",
+            "pragma": "no-cache",
+            "priority": "u=1, i",
+            "referer": page_header_referer,
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+        }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua),
+        timeout=30,
+    )
+    logger.info(
+        "Epiphron 接口响应 | endpoint=/webcast/epiphron/feature/upload/ "
+        "| http_status={} | classification=epiphron_response",
+        response.status_code,
+    )
+    if response.status_code != 200:
+        raise SafeOperationError("epiphron_unavailable")
+    try:
+        payload = response.json()
+    except Exception:
+        raise SafeOperationError("epiphron_unavailable") from None
+    logger.info(
+        "Epiphron 业务响应 | endpoint=/webcast/epiphron/feature/upload/ "
+        "| status_code={} | classification=epiphron_business_response",
+        payload.get("status_code"),
+    )
+    if payload.get("status_code") != 0:
+        # This endpoint uploads page features; the browser proceeds to CSRF and
+        # chat even when that auxiliary upload is not accepted.  Preserve the
+        # request and evidence, but never reinterpret its business code as a
+        # failed comment submission.
+        logger.warning(
+            "Epiphron 特征上报未接受，继续评论流程 | status_code={} "
+            "| classification=epiphron_business_nonblocking",
+            payload.get("status_code"),
+        )
+    return response
+
+
+def _get_signed_browser_prerequisite(
+    session: requests.Session,
+    url: str,
+    cookie: str,
+    ms_token: str,
+    referer: str,
+    *,
+    profile: BrowserProfile,
+    signer: SigningSession,
+    account_id: str,
+    room_id: str,
+    operation: str,
+) -> requests.Response:
+    signed_url = signer.sign(
+        url, account_id=account_id, room_id=room_id,
+        query_token=ms_token, operation=operation,
+    )
+    response = session.get(
+        signed_url,
+        headers=browser_headers({
+            "accept": "*/*",
+            "accept-language": "zh-CN,zh;q=0.9,en-US;q=0.8,en;q=0.7",
+            "cache-control": "no-cache",
+            "cookie": cookie_with_ms_token_fallback(cookie, ms_token),
+            "pragma": "no-cache",
+            "priority": "u=1, i",
+            "referer": referer,
+            "sec-fetch-dest": "empty",
+            "sec-fetch-mode": "cors",
+            "sec-fetch-site": "same-site",
+        }, user_agent=profile.user_agent, sec_ch_ua=profile.sec_ch_ua),
+        timeout=30,
+    )
+    logger.info(
+        "网页评论预请求响应 | stage={} | http_status={} | response_size={} "
+        "| classification=browser_prerequisite_response",
+        operation, response.status_code,
+        len(getattr(response, "content", b"") or b""),
+    )
+    if response.status_code != 200:
+        raise SafeOperationError(f"{operation}_unavailable")
+    return response
+
+
+def get_browser_room_alive(
+    session: requests.Session, url: str, cookie: str, ms_token: str,
+    referer: str, *, profile: BrowserProfile, signer: SigningSession,
+    account_id: str, room_id: str,
+) -> requests.Response:
+    return _get_signed_browser_prerequisite(
+        session, url, cookie, ms_token, referer, profile=profile,
+        signer=signer, account_id=account_id, room_id=room_id,
+        operation="check_alive",
+    )
+
+
+def get_browser_event_feed(
+    session: requests.Session, url: str, cookie: str, ms_token: str,
+    referer: str, *, profile: BrowserProfile, signer: SigningSession,
+    account_id: str, room_id: str,
+) -> requests.Response:
+    return _get_signed_browser_prerequisite(
+        session, url, cookie, ms_token, referer, profile=profile,
+        signer=signer, account_id=account_id, room_id=room_id,
+        operation="event_feed",
     )
 
 
@@ -960,6 +1467,7 @@ class RetryableMessageResult(dict[str, Any]):
 
 
 def _post_prepared_chat(**kwargs):
+    prepare_before_chat = kwargs.pop('prepare_before_chat', None)
     room = kwargs['room']
     username = room.get('username') or room['url'].split('/@', 1)[1].split('/', 1)[0]
     wss_user_agent = kwargs.get('wss_user_agent') or kwargs['profile'].user_agent
@@ -968,6 +1476,8 @@ def _post_prepared_chat(**kwargs):
         heartbeat_options['initial_fetch'] = kwargs['initial_fetch']
     with room_heartbeat(username, str(room['roomId']), kwargs['runtime_cookie'],
                         wss_user_agent, **heartbeat_options):
+        if prepare_before_chat is not None:
+            kwargs['csrf_token'] = prepare_before_chat()
         return _post_chat_with_heartbeat(**kwargs)
 
 
@@ -984,15 +1494,24 @@ def _post_chat_with_heartbeat(
     profile: BrowserProfile,
     ticket_guard_state: dict[str, str] | None,
     ticket_guard_headers: dict[str, str] | None,
+    signer: SigningSession,
+    account_id: str,
+    environment_plaintext: str | None = None,
     initial_fetch: object | None = None,
     wss_user_agent: str | None = None,
 ) -> RetryableMessageResult:
     """Build a fresh signed body and post it using an already prepared room/session."""
     def retry():
-        return _post_prepared_chat(session=session,message=message,cookies=cookies,room=room,
-            device_id=device_id,runtime_cookie=runtime_cookie,ms_token=ms_token,csrf_token=csrf_token,
-            profile=profile,ticket_guard_state=ticket_guard_state,ticket_guard_headers=ticket_guard_headers,
-            initial_fetch=initial_fetch,wss_user_agent=wss_user_agent)
+        retry_session = requests.Session(impersonate=profile.impersonate)
+        try:
+            return _post_prepared_chat(session=retry_session,message=message,cookies=cookies,room=room,
+                device_id=device_id,runtime_cookie=runtime_cookie,ms_token=ms_token,csrf_token=csrf_token,
+                profile=profile,ticket_guard_state=ticket_guard_state,ticket_guard_headers=ticket_guard_headers,
+                signer=signer,account_id=account_id,
+                environment_plaintext=environment_plaintext,
+                initial_fetch=initial_fetch,wss_user_agent=wss_user_agent)
+        finally:
+            retry_session.close()
     url, body = build_chat_request(
         room_id=room["roomId"],
         message=message,
@@ -1000,12 +1519,16 @@ def _post_chat_with_heartbeat(
         device_id=device_id,
         referer=room["url"],
         profile=profile,
+        region=room.get("region"),
+        environment_plaintext=environment_plaintext,
+        history_len=1,
     )
     try:
         response = post_chat_request(
             session, url, body, runtime_cookie, ms_token, csrf_token, room["url"],
             profile=profile, ticket_guard_state=ticket_guard_state,
             ticket_guard_headers=ticket_guard_headers,
+            signer=signer, account_id=account_id, room_id=str(room["roomId"]),
         )
     except Exception as exc:
         if transient_failure(exc):
@@ -1071,6 +1594,21 @@ def _send_live_message(username: str, cookie: str, message: str, *, ticket_guard
 
 
 def _send_live_message_in_flow(username: str, cookie: str, message: str, *, ticket_guard_state: dict[str, str] | None = None, ticket_guard_headers: dict[str, str] | None = None, account_display_name: str | None = None, user_agent: str | None = None, known_room_id: str | None = None, known_fetch_endpoint: str | None = None, known_region: str | None = None, known_device_id: str | None = None, room_id_cookie: str | None = None) -> dict[str, Any]:
+    options = {
+        "ticket_guard_state": ticket_guard_state,
+        "ticket_guard_headers": ticket_guard_headers,
+        "account_display_name": account_display_name,
+        "user_agent": user_agent,
+        "known_room_id": known_room_id,
+        "known_fetch_endpoint": known_fetch_endpoint,
+        "known_region": known_region,
+        "known_device_id": known_device_id,
+        "room_id_cookie": room_id_cookie,
+    }
+    return _send_live_message_attempt(username, cookie, message, **options)
+
+
+def _send_live_message_attempt(username: str, cookie: str, message: str, *, ticket_guard_state: dict[str, str] | None = None, ticket_guard_headers: dict[str, str] | None = None, account_display_name: str | None = None, user_agent: str | None = None, known_room_id: str | None = None, known_fetch_endpoint: str | None = None, known_region: str | None = None, known_device_id: str | None = None, room_id_cookie: str | None = None, _session: requests.Session | None = None) -> dict[str, Any]:
     if not str(cookie or "").strip():
         raise ValueError("cookie 不能为空")
     if not str(message or "").strip():
@@ -1078,86 +1616,199 @@ def _send_live_message_in_flow(username: str, cookie: str, message: str, *, tick
     cookies = parse_cookie_string(cookie)
 
     profile = browser_profile_from_user_agent(user_agent)
-    fingerprint = current_fingerprint()
-    session = requests.Session(impersonate=fingerprint)
-    ms_token = _run_pre_send_with_retry(
-        "ms_token",
-        lambda: get_fresh_ms_token(session, cookie=cookie, profile=profile),
+    # The TLS ClientHello must describe the same browser major as the UA,
+    # sec-ch-ua and WebMS SDK payload.  A random Safari/Firefox fingerprint
+    # produces a syntactically successful but risk-filtered chat request.
+    fingerprint = profile.impersonate
+    if _session is None:
+        session = requests.Session(impersonate=fingerprint)
+        try:
+            return _send_live_message_attempt(
+                username, cookie, message,
+                ticket_guard_state=ticket_guard_state,
+                ticket_guard_headers=ticket_guard_headers,
+                account_display_name=account_display_name,
+                user_agent=user_agent,
+                known_room_id=known_room_id,
+                known_fetch_endpoint=known_fetch_endpoint,
+                known_region=known_region,
+                known_device_id=known_device_id,
+                room_id_cookie=room_id_cookie,
+                _session=session,
+            )
+        finally:
+            session.close()
+    session = _session
+    try:
+        account_id = account_id_from_cookies(_cookie_records_from_header(cookie))
+    except ValueError:
+        account_id = hashlib.sha256(str(cookie or "").encode("utf-8")).hexdigest()
+    requested_username = str(username or "").strip().lstrip("@")
+    requested_page_url = f"https://www.tiktok.com/@{quote(requested_username)}/live"
+    environment_plaintext = build_ms_token_environment(
+        user_agent=profile.user_agent,
+        account_seed=environment_seed_for_account_id(account_id),
+        ttwid=cookies.get("ttwid", ""),
+        page_url=requested_page_url,
+    )
+    sdk_state = create_sdk_state(requested_page_url, environment_plaintext)
+    signer = SigningSession(
+        account_id, None, requested_page_url, profile, sdk_state,
+    )
+    issued_ms_token = get_fresh_ms_token(
+        session, cookie=cookie, signer=signer,
+        environment_plaintext=environment_plaintext,
+    )
+    saved_query_token = first_saved_ms_token(cookie)
+    ms_token = saved_query_token or issued_ms_token
+    logger.info(
+        "msToken 通道已分离 | query_token_source={} | query_token_length={} "
+        "| classification=ms_token_channels_ready",
+        "saved_page" if saved_query_token else "report_fallback",
+        len(ms_token),
     )
     logger.info("请求环境准备完成")
-    runtime_cookie = cookie_with_ms_token(cookie, ms_token)
+    # Keep the browser-captured scoped msToken cookies intact.  The fresh
+    # report token is tracked separately as the signed-query token.
+    runtime_cookie = cookie_with_ms_token_fallback(cookie, ms_token)
+    room_page_started_ms = int(time.time() * 1000)
     resolved_room_id = str(known_room_id or "").strip()
-    if resolved_room_id:
-        clean_username = str(username or "").strip().lstrip("@")
-        room = {
-            "exists": True, "roomId": resolved_room_id,
-            "username": clean_username, "nickname": "-",
-            "accountUsername": None, "accountNickname": account_display_name,
-            "deviceId": None,
-            "url": f"https://www.tiktok.com/@{quote(clean_username)}/live",
-            "status": None,
-        }
-        if isinstance(known_fetch_endpoint, str) and known_fetch_endpoint.strip():
-            room["fetchEndpoint"] = known_fetch_endpoint.strip()
-        if isinstance(known_region, str) and re.fullmatch(r"[A-Za-z]{2}", known_region.strip()):
-            room["region"] = known_region.strip().upper()
-        if (isinstance(known_device_id, str)
-                and re.fullmatch(r"[0-9]{10,20}", known_device_id.strip())
-                and 0 < int(known_device_id.strip()) < 2**64):
-            room["deviceId"] = known_device_id.strip()
-        logger.info("复用弹幕监听 room_id，跳过公开直播页请求 | room_id={}", resolved_room_id)
-    else:
-        room = _run_pre_send_with_retry(
-            "live_room",
-            lambda: get_live_room(
-                session, username, runtime_cookie, profile=profile,
-                fallback_cookie=room_id_cookie,
-            ),
-        )
+    # The live page refreshes tt_chain_token and related cookies.  Keep this GET
+    # in the same HTTP session as initial fetch and chat; reusing only an
+    # observer's room_id leaves the sender session with a stale cookie chain.
+    room = _run_pre_send_with_retry(
+        "live_room",
+        lambda: get_live_room(
+            session, username, runtime_cookie, profile=profile,
+            fallback_cookie=room_id_cookie,
+        ),
+    )
+    if resolved_room_id and str(room.get("roomId") or "") != resolved_room_id:
+        raise SafeOperationError("room_state_unconfirmed")
+    if (not room.get("fetchEndpoint") and isinstance(known_fetch_endpoint, str)
+            and known_fetch_endpoint.strip()):
+        room["fetchEndpoint"] = known_fetch_endpoint.strip()
+    if (not room.get("region") and isinstance(known_region, str)
+            and re.fullmatch(r"[A-Za-z]{2}", known_region.strip())):
+        room["region"] = known_region.strip().upper()
+    if (not room.get("deviceId") and isinstance(known_device_id, str)
+            and re.fullmatch(r"[0-9]{10,20}", known_device_id.strip())
+            and 0 < int(known_device_id.strip()) < 2**64):
+        room["deviceId"] = known_device_id.strip()
+    cookie_jar = getattr(session, "cookies", None)
+    page_updates = (
+        cookie_jar.get_dict()
+        if cookie_jar is not None and hasattr(cookie_jar, "get_dict")
+        else {}
+    )
+    if page_updates:
+        runtime_cookie = _merge_runtime_cookie(runtime_cookie, page_updates)
+        cookies = parse_cookie_string(runtime_cookie)
     if not room.get("exists") or "isLive" in room and room["isLive"] is not True:
         result = {"ok": False, "roomExists": False, "roomId": None, "statusCode": None, "message": "直播间不存在", "accountUsername": room.get("accountUsername"), "accountNickname": room.get("accountNickname")}
         log_send_result(result, http_status=room.get("status"))
         return result
 
+    # Some room resolvers (and listener-provided room metadata) only return the
+    # room id and host identity.  All browser-shaped pre-send requests still
+    # need the canonical live-page referer, so fall back to the page we just
+    # requested instead of turning an otherwise valid room into a KeyError.
+    room["url"] = str(room.get("url") or requested_page_url)
+
     current_account_name = (room.get("accountNickname")
                             or room.get("accountUsername") or account_display_name or "-")
     log_room_ready(room["roomId"], room.get("username") or username, current_account_name)
     device_id = room.get("deviceId") or create_device_id()
-    # `/webcast/im/fetch/` below carries `client_enter=1`; its protobuf
-    # response is the authoritative audience/WSS bootstrap.  A separate
-    # `/webcast/room/enter/` POST is not required and is deliberately omitted:
-    # live API verification showed that fetch + WSS + chat is observable even
-    # when no enter POST is sent, while the extra POST is independently liable
-    # to risk-control 403 responses.
+    signer.bind_room(str(room["roomId"]))
     fetch_session = prepare_account(
         room.get("username") or username,
         str(room["roomId"]),
         runtime_cookie,
         profile.user_agent,
     )
-    fetch_http_session = requests.Session(impersonate=fingerprint)
+    fetch_options = {"device_id": device_id, "ms_token": ms_token}
     try:
-        fetch_options = {"device_id": device_id, "ms_token": ms_token}
-        endpoint = room.get("fetchEndpoint")
-        if isinstance(endpoint, str) and endpoint.strip():
-            fetch_options["endpoint"] = endpoint.strip()
-        try:
-            initial_fetch = _run_pre_send_with_retry(
-                "initial_fetch",
-                lambda: fetch_initial_response(
-                    fetch_http_session, fetch_session, **fetch_options,
+        signing_environment = json.loads(environment_plaintext)
+        fetch_screen_size = (
+            int(signing_environment["screen"]["sizeWidth"]),
+            int(signing_environment["screen"]["sizeHeight"]),
+        )
+    except (KeyError, TypeError, ValueError, json.JSONDecodeError):
+        raise SafeOperationError("signing_state_unsupported") from None
+    fetch_options["screen_size"] = fetch_screen_size
+    endpoint = room.get("fetchEndpoint")
+    if isinstance(endpoint, str) and endpoint.strip():
+        fetch_options["endpoint"] = endpoint.strip()
+    try:
+        initial_fetch = _run_pre_send_with_retry(
+            "initial_fetch",
+            lambda: fetch_initial_response(
+                session, fetch_session, signer=signer,
+                account_id=account_id, **fetch_options,
+            ),
+            checkpoint=signer.checkpoint,
+            restore=signer.restore,
+        )
+    except Exception:
+        raise SafeOperationError("initial_fetch_unavailable") from None
+    fetch_updates = (
+        cookie_jar.get_dict()
+        if cookie_jar is not None and hasattr(cookie_jar, "get_dict")
+        else {}
+    )
+    if fetch_updates:
+        runtime_cookie = _merge_runtime_cookie(runtime_cookie, fetch_updates)
+        cookies = parse_cookie_string(runtime_cookie)
+    def prepare_before_chat() -> str:
+        epiphron_url = build_epiphron_request(
+            cookies, device_id, room["url"], profile=profile,
+            region=room.get("region"),
+            environment_plaintext=environment_plaintext,
+            history_len=1,
+        )
+        epiphron_user_id = _active_tiktok_user_id(cookies)
+        epiphron_owner_id = str(room.get("ownerId") or "")
+        epiphron_now_ms = int(time.time() * 1000)
+        if epiphron_user_id and epiphron_owner_id:
+            epiphron_body = build_epiphron_body(
+                str(room["roomId"]), epiphron_owner_id, epiphron_user_id,
+                str(device_id), now_ms=epiphron_now_ms,
+                watch_duration_ms=max(
+                    30000, epiphron_now_ms - room_page_started_ms,
                 ),
             )
-        except Exception:
-            raise SafeOperationError("initial_fetch_unavailable") from None
-    finally:
-        fetch_http_session.close()
-    csrf_token = _run_pre_send_with_retry(
-        "csrf_token",
-        lambda: get_sec_sdk_csrf_token(session, runtime_cookie, profile=profile),
-    )
-    if not csrf_token:
-        raise SafeOperationError("csrf_token_unavailable")
+        else:
+            logger.warning(
+                "Epiphron 身份字段不完整，使用兼容请求体继续流程 "
+                "| owner_id_present={} | user_id_present={} "
+                "| classification=epiphron_identity_fallback",
+                bool(epiphron_owner_id), bool(epiphron_user_id),
+            )
+            epiphron_body = b"{}"
+        def post_epiphron_once() -> requests.Response:
+            return _run_pre_send_with_retry(
+                "epiphron",
+                lambda: post_epiphron_feature(
+                    session, epiphron_url, runtime_cookie, ms_token,
+                    room["url"], profile=profile, signer=signer,
+                    account_id=account_id, room_id=str(room["roomId"]),
+                    body=epiphron_body,
+                ),
+                checkpoint=signer.checkpoint,
+                restore=signer.restore,
+            )
+
+        post_epiphron_once()
+        csrf_token = _run_pre_send_with_retry(
+            "csrf_token",
+            lambda: get_sec_sdk_csrf_token(
+                session, runtime_cookie, referer=room["url"], profile=profile,
+            ),
+        )
+        if not csrf_token:
+            raise SafeOperationError("csrf_token_unavailable")
+        return csrf_token
+
     return _post_prepared_chat(
         session=session,
         message=message,
@@ -1166,12 +1817,16 @@ def _send_live_message_in_flow(username: str, cookie: str, message: str, *, tick
         device_id=device_id,
         runtime_cookie=runtime_cookie,
         ms_token=ms_token,
-        csrf_token=csrf_token,
+        csrf_token=None,
         profile=profile,
         ticket_guard_state=ticket_guard_state,
         ticket_guard_headers=ticket_guard_headers,
+        signer=signer,
+        account_id=account_id,
+        environment_plaintext=environment_plaintext,
         initial_fetch=initial_fetch,
         wss_user_agent=profile.user_agent,
+        prepare_before_chat=prepare_before_chat,
     )
 
 def send_live_message(username: str, cookie: str, message: str, *, ticket_guard_state: dict[str, str] | None = None, ticket_guard_headers: dict[str, str] | None = None, account_display_name: str | None = None, user_agent: str | None = None, known_room_id: str | None = None, known_fetch_endpoint: str | None = None, known_region: str | None = None, known_device_id: str | None = None, room_id_cookie: str | None = None) -> dict[str, Any]:

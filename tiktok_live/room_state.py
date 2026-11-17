@@ -56,15 +56,21 @@ def extract_bound_room_state(html, username):
                 raise ValueError("Invalid live-room state")
             room_id = (user.get("roomId") or user.get("room_id") or live.get("id")
                        or value.get("roomId") or value.get("room_id"))
+            owner_id = user.get("id") or user.get("id_str") or user.get("userId")
             if (type(room_id) not in (str, int) or not re.fullmatch(r"[0-9]{1,20}", str(room_id))
                     or not 0 < int(room_id) < 2**64):
                 room_id = None
             status, is_live = room_state_flags(user.get("status"), live.get("status"))
+            if (type(owner_id) not in (str, int)
+                    or not re.fullmatch(r"[0-9]{5,30}", str(owner_id))):
+                owner_id = None
             return {"roomId": str(room_id) if room_id is not None else None,
+                    "ownerId": str(owner_id) if owner_id is not None else None,
                     "username": owner, "nickname": user.get("nickname") or user.get("nickName") or "-",
                     "liveStatus": status, "isLive": is_live}
         pending.extend((child, depth + 1) for child in reversed(list(value.values()))
                        if isinstance(child, (dict, list)))
     if hydrated or found_container:
-        return {"roomId": None, "username": username, "nickname": "-", "liveStatus": None, "isLive": None}
+        return {"roomId": None, "ownerId": None, "username": username,
+                "nickname": "-", "liveStatus": None, "isLive": None}
     return None

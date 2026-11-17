@@ -54,7 +54,8 @@ def _chrome_profile(major: int, impersonate_major: int | None = None) -> Browser
             f"Chrome/{major}.0.0.0 Safari/537.36"
         ),
         sec_ch_ua=(
-            f'"Chromium";v="{major}", "Not:A-Brand";v="99"'
+            f'"Chromium";v="{major}", "Google Chrome";v="{major}", '
+            '"Not.A/Brand";v="99"'
         ),
         impersonate=f"chrome{impersonate_major or major}",
     )
@@ -107,7 +108,8 @@ def browser_profile_from_user_agent(user_agent: str | None) -> BrowserProfile:
     return BrowserProfile(
         user_agent=value,
         sec_ch_ua=(
-            f'"Chromium";v="{major}", "Not:A-Brand";v="99"'
+            f'"Chromium";v="{major}", "Google Chrome";v="{major}", '
+            '"Not.A/Brand";v="99"'
         ),
         impersonate=transport.impersonate,
     )

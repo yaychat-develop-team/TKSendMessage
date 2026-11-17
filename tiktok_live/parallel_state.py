@@ -14,6 +14,7 @@ from .account_store import (
     _identities_match,
     _identity_is_ambiguous,
     load_account_store,
+    mark_login_expired,
     save_account_store_atomic,
 )
 
@@ -174,6 +175,8 @@ class IsolatedAccountRuns:
             if (candidate["cookies"] != original["cookies"]
                     and not self._same_identity(original, candidate)):
                 return
+            if candidate.get('login_expired') is True:
+                self._expired.add(account_id)
             if candidate != original:
                 self._updates[account_id] = deepcopy(candidate)
 
@@ -189,10 +192,10 @@ class IsolatedAccountRuns:
             for record in merged["accounts"]:
                 account_id = record["id"]
                 if record == self._baseline.get(account_id):
-                    if account_id in self._expired:
-                        continue
                     if account_id in self._updates:
                         record = deepcopy(self._updates[account_id])
+                    if account_id in self._expired:
+                        mark_login_expired(record)
                 accounts.append(record)
             merged["accounts"] = accounts
             if merged == current:

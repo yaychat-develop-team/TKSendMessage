@@ -13,6 +13,7 @@ _SAFE_ERROR_MESSAGES = {
     "listener_unavailable": "直播间监听连接重试已耗尽，本次任务已停止，未发送任何消息。请检查主播用户名、开播状态和网络后重试。",
     "csrf_token_unavailable": "未获取到发送所需的 CSRF token，未发送消息。请检查网络或重新登录后重试。",
     "room_enter_unavailable": "HTTP 进入直播间请求未成功，未发送消息。请检查直播间状态、账号或网络。",
+    "chat_preflight_unavailable": "评论接口预检未成功，未发送消息。请检查账号会话或网络后重试。",
     "initial_fetch_unavailable": "首次直播数据请求未成功，未连接 WSS、未发送消息。请检查直播间状态、账号或网络。",
     "account_store_corrupt": "账户库损坏或格式不兼容。请先备份原文件，再恢复有效的版本 1 备份。",
     "account_store_unreadable": "无法读取账户库。请检查文件权限与文件是否可访问。",
@@ -26,7 +27,7 @@ _SAFE_ERROR_MESSAGES = {
     "login_state_unavailable": "连续多次无法读取登录状态，未保存本次登录。请检查登录窗口和网络后重试。",
     "login_page_unavailable": "无法打开官方登录页面，未保存本次登录。请检查网络后重试。",
     "login_identity_unavailable": "登录 Cookie 尚未形成可识别的账户状态，未保存本次登录。请重新登录并等待 TikTok 正式页面完全打开。",
-    "login_cookie_incomplete": "登录 Cookie 缺少 s_v_web_id，未保存本次登录。请保持登录页面打开并等待 TikTok 完成安全环境初始化。",
+    "login_cookie_incomplete": "登录 Cookie 尚未形成完整的可发言会话，未保存本次登录。请保持登录页面打开并等待 TikTok 完成安全环境初始化。",
     "ticket_guard_unavailable": "当前账号缺少有效的 Ticket Guard 会话，未发送消息。请重新登录账号后重试。",
     "runtime_error": "运行未完成。请检查配置、依赖和本地文件后重试。",
 }

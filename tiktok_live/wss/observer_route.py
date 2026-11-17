@@ -9,8 +9,9 @@ from curl_cffi.curl import CURL_WRITEFUNC_ERROR
 
 from ..config import browser_profile_from_user_agent, MS_TOKEN_URL
 from ..public_room import extract_webcast_fetch_endpoint, _current_room_state, _public_waf_cookies
-from ..signing import (browser_headers, build_ms_token_environment, sign_url, parse_cookie_string)
-from ..algorithms.ms_token import generate_ms_seed_token, build_ms_token_report_json
+from ..signing import (browser_headers, build_ms_token_environment, parse_cookie_string)
+from ..reference_signing import sign_url
+from ..algorithms.reference_ms_token import generate_ms_seed_token, build_ms_token_report_json
 from .initial_fetch import build_initial_fetch_request, decode_initial_fetch, build_initialized_ws_url
 from .sessions import visitor_cookie_header, reject_login_cookie_jar
 

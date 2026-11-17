@@ -264,6 +264,7 @@ def _current_room_state(html, username):
             raise RoomOwnerMismatch('Current room owner does not match target')
         status, is_live = room_state_flags(user.get('status'), live.get('status'))
         room_id = user.get('roomId')
+        owner_id = user.get('id') or user.get('id_str') or user.get('userId')
         if (type(room_id) not in (str, int) or not re.fullmatch(r'[0-9]{1,20}', str(room_id))
                 or not 0 < int(room_id) < 2**64):
             if is_live is False:
@@ -277,7 +278,11 @@ def _current_room_state(html, username):
                 raise RoomOffline()
             raise ValueError()
         status, is_live = room_state_flags(user.get('status'), live.get('status'))
-        return dict(roomId=str(room_id), username=owner, nickname=user.get('nickname') or user.get('nickName') or '-',
+        if (type(owner_id) not in (str, int)
+                or not re.fullmatch(r'[0-9]{5,30}', str(owner_id))):
+            owner_id = None
+        return dict(roomId=str(room_id), ownerId=str(owner_id) if owner_id is not None else None,
+                    username=owner, nickname=user.get('nickname') or user.get('nickName') or '-',
                     liveStatus=status, isLive=is_live)
     except (RoomOwnerMismatch, RoomOffline):
         raise

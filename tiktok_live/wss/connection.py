@@ -145,7 +145,14 @@ class DirectConnection:
             if stop_event.is_set() or self._closed.is_set():
                 return
             self.connected = True
-            self._send(encode_enter_room(int(self.room_id), cursor=cursor), stop_event)
+            enter_frame = encode_enter_room(int(self.room_id), cursor=cursor)
+            enter_sent = self._send(enter_frame, stop_event)
+            if enter_sent:
+                logger.info('WSS 进房帧已发送 | username={} | room_id={} | role={} '
+                            '| payload_type=im_enter_room | frame_bytes={} '
+                            '| classification=wss_enter_frame_sent',
+                            self.session.target_username, self.room_id, self.session.role,
+                            len(enter_frame))
             self._send_heartbeat(stop_event)
             next_beat = self._clock() + interval
             self._on_connected()

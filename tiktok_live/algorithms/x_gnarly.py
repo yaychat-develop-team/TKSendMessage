@@ -20,8 +20,10 @@ __all__ = [
 ]
 
 GNARLY_ALPHABET = "u09tbS3UvgDEe6r-ZVMXzLpsAohTn7mdINQlW412GqBjfYiyk8JORCF5/xKHwacP"
-SCM_VERSION = "1.0.0.382"
-SDK_VERSION = "5.3.0"
+SCM_VERSION = "1.0.0.417"
+SDK_VERSION = "5.3.2"
+WEBMSSDK_MARKER = 73
+PROTOCOL_MARKER = 0x41
 RISK_KEYS = {"msToken", "X-Dynosaur", "X-Bogus", "X-Gnarly"}
 OUTPUT_SIGN_KEYS = {"X-Bogus", "X-Gnarly"}
 
@@ -41,9 +43,12 @@ RANDOM_STATE_PREFIX = [
     3732962506,
 ]
 
-_GNARLY_DEFAULT_ORDER = [12, 16, 5, 6, 10, 7, 1, 3, 2, 4, 15, 0, 8, 14, 9, 13, 11]
+_GNARLY_DEFAULT_ORDER = [6, 8, 10, 16, 5, 0, 11, 7, 14, 13, 4, 2, 15, 3, 12, 1, 9]
 _GNARLY_SESSION_CONTEXT = {
+    "field2": 0,
     "field8": 1881297510,
+    "sdk_version": SDK_VERSION,
+    "scm_version": SCM_VERSION,
     "field12": 72,
     "field13": 12,
     "order": _GNARLY_DEFAULT_ORDER,
@@ -51,6 +56,8 @@ _GNARLY_SESSION_CONTEXT = {
 
 _GNARLY_REPORT_CONTEXT = {
     "field8": 1881297510,
+    "sdk_version": SDK_VERSION,
+    "scm_version": SCM_VERSION,
     "field12": 70,
     "field13": 11,
     "order": _GNARLY_DEFAULT_ORDER,
@@ -58,10 +65,13 @@ _GNARLY_REPORT_CONTEXT = {
 
 _GNARLY_WEBCAST_ROOM_ENTER_CONTEXT = {
     "field2": 14,
-    "field8": 2072048325,
+    "field8": 1058810474,
+    "perf_data": 2386237635,
+    "sdk_version": SDK_VERSION,
+    "scm_version": SCM_VERSION,
     "field12": 2,
     "field13": 1,
-    "order": [1, 11, 6, 2, 8, 16, 7, 3, 13, 12, 0, 4, 5, 14, 9, 15, 10],
+    "order": [9, 1, 7, 10, 5, 6, 4, 11, 0, 14, 12, 2, 15, 8, 3, 16, 13],
 }
 
 def _u32(value: int) -> int:
@@ -276,10 +286,11 @@ def _gnarly_field8(seed: int | None = None) -> int:
 
 
 def _gnarly_field14(ts: int, field8: int) -> int:
-    """S(46627)：0x10000 | ts 高低 16 位与 field8 高低 16 位异或。"""
+    """Current WebMS SDK mixes the request time with the page session value."""
     return (
-        0x10000
-        | ((ts & 0xFFFF) ^ ((ts >> 16) & 0xFFFF) ^ (field8 & 0xFFFF) ^ ((field8 >> 16) & 0xFFFF))
+        (WEBMSSDK_MARKER << 16)
+        | ((ts & 0xFFFF) ^ ((ts >> 16) & 0xFFFF)
+           ^ (field8 & 0xFFFF) ^ ((field8 >> 16) & 0xFFFF))
     ) & 0xFFFFFFFF
 
 
@@ -300,7 +311,7 @@ def build_x_gnarly_payload(
     field_order: list[int] | None = None,
 ) -> bytes:
     """
-    webmssdk 1.0.0.382 的 X-Gnarly 明文 TLV。
+    webmssdk 1.0.0.417 的 X-Gnarly 明文 TLV。
 
     字段顺序必须和 VM 一致，服务端会校验顺序和值。
     """
@@ -318,7 +329,7 @@ def build_x_gnarly_payload(
 
     values: list[int | str] = [
         0,
-        1,
+        WEBMSSDK_MARKER,
         field2,
         _md5_hex(query),
         body_hash,
@@ -340,7 +351,7 @@ def build_x_gnarly_payload(
 
     field_map: dict[int, int | str] = {
         0: field0,
-        1: 1,
+        1: WEBMSSDK_MARKER,
         2: field2,
         3: _md5_hex(query),
         4: body_hash,

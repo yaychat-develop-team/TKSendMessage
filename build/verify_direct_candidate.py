@@ -120,6 +120,9 @@ def main():
         names += ['tests.test_consecutive_unobserved', 'tests.test_request_fingerprint']
         names += ['tests.test_long_run_recovery']
         names += ['tests.test_observer_proxy']
+        names += ['tests.test_expired_accounts',
+                  'tests.test_main_window.MainWindowTests.test_expired_account_remains_visible_with_reason_after_refresh',
+                  'tests.test_main_window.MainWindowTests.test_live_expiry_shows_reason_before_run_finishes']
         names += ['tests.test_desktop_settings', 'tests.test_desktop_workers']
         names += ['tests.test_single_instance', 'tests.test_startup_safety',
                   'tests.test_main_window.MainWindowTests.test_delete_checked_accounts_ignores_highlighted_unchecked_row',

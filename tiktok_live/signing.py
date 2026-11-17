@@ -37,6 +37,24 @@ def cookie_with_ms_token(cookie: str, ms_token: str) -> str:
     return "; ".join(parts)
 
 
+def cookie_with_ms_token_fallback(cookie: str, ms_token: str) -> str:
+    """Preserve captured scoped tokens; add one only when none was saved."""
+    if "msToken" in parse_cookie_string(cookie):
+        return str(cookie)
+    return cookie_with_ms_token(cookie, ms_token)
+
+
+def first_saved_ms_token(cookie: str) -> str | None:
+    """Return the first browser-ordered msToken without collapsing scopes."""
+    for part in str(cookie or "").split(";"):
+        item = part.strip()
+        if item.startswith("msToken="):
+            value = item.split("=", 1)[1].strip()
+            if value:
+                return value
+    return None
+
+
 def _query_key(part: str) -> str:
     return part.split("=", 1)[0]
 
@@ -56,6 +74,7 @@ def sign_url(
     user_agent: str = USER_AGENT,
     dynosaur_context: dict | None = None,
     gnarly_context: dict | None = None,
+    emit_ms_token: str | None = None,
 ) -> str:
     if not ms_token:
         raise ValueError("ms_token 不能为空")
@@ -73,7 +92,9 @@ def sign_url(
         context=dynosaur_context,
     )
     query = _append_query(clean_query, "X-Dynosaur", x_dynosaur)
-    query = _append_query(query, "msToken", ms_token)
+    query = _append_query(
+        query, "msToken", ms_token if emit_ms_token is None else emit_ms_token,
+    )
     token_url = urlunsplit(
         (parts.scheme, parts.netloc, parts.path, query, parts.fragment)
     )
@@ -111,9 +132,18 @@ def _environment_profile(account_seed: str) -> dict[str, object]:
 
 
 def build_ms_token_environment(
-    user_agent: str = USER_AGENT, *, account_seed: str = "", ttwid: str = ""
+    user_agent: str = USER_AGENT, *, account_seed: str = "", ttwid: str = "",
+    page_url: str | None = None,
 ) -> str:
     env = json.loads(BROWSER_ENV_PATH.read_text(encoding="utf-8"))
+    if page_url is not None:
+        page = urlsplit(str(page_url))
+        if (page.scheme != "https" or page.hostname != "www.tiktok.com"
+                or not page.path.startswith("/@") or not page.path.endswith("/live")
+                or page.query or page.fragment):
+            raise ValueError("signing_identity_mismatch")
+        env["window"]["location"] = str(page_url)
+        env["document"]["URL"] = str(page_url)
     profile = _environment_profile(account_seed)
     screen_width, screen_height, avail_height = profile["screen"]
     inner_width, inner_height = profile["viewport"]
@@ -123,14 +153,17 @@ def build_ms_token_environment(
     start = now - 3200
     env["navigator"]["userAgent"] = user_agent
     env["navigator"]["appVersion"] = user_agent.replace("Mozilla/", "", 1)
+    env["navigator"]["webdriver"] = "false"
     env["navigator"]["hardwareConcurrency"] = cpu
     env["navigator"]["deviceMemory"] = memory
     env["navigator"]["maxTouchPoints"] = 0
     env["wID"]["timestamp"] = str(now)
-    env["wID"]["sdkVersion"] = "5.3.0"
-    env["wID"]["scmVersion"] = "1.0.0.382"
+    env["wID"]["sdkVersion"] = "5.3.2"
+    env["wID"]["scmVersion"] = "1.0.0.417"
     env["wID"]["iframeInfo"]["iFrameNP"]["uA"] = user_agent
     env["wID"]["iframeInfo"]["iFrameNP"]["hC"] = cpu
+    env["wID"]["iframeInfo"]["iFrameNP"]["wd"] = "false"
+    env["wID"]["iframeInfo"]["pNP"]["wd"] = "false"
     env["wID"]["iframeInfo"]["iFrameSP"].update({
         "aH": avail_height, "aW": screen_width,
         "h": screen_height, "w": screen_width, "pD": 24,

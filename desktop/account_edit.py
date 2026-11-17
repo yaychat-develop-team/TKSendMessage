@@ -103,3 +103,33 @@ def save_edited_account(path: Path, original: dict, edited: object) -> None:
             raise AccountEditError('账号文件无法读取，未保存。') from None
 
     save_account_store_atomic(path, store, before_replace=guard)
+
+
+def save_account_remark(path: Path, account_id: str, remark: str) -> None:
+    """Update only the note, rejecting a concurrent account-store replacement."""
+    if (not isinstance(remark, str) or len(remark) > 200
+            or '\r' in remark or '\n' in remark):
+        raise AccountEditError('备注需为单行文字，最多 200 字，未保存。')
+    path = Path(path)
+    try:
+        before = path.read_bytes()
+        store = load_account_store(path)
+        if path.read_bytes() != before:
+            raise AccountEditError('账号数据已变化，请刷新后重试。')
+    except OSError:
+        raise AccountEditError('账号文件无法读取，未保存。') from None
+    for account in store['accounts']:
+        if account['id'] == account_id:
+            account['remark'] = remark
+            break
+    else:
+        raise AccountEditError('账号已不存在，未保存。')
+
+    def guard() -> None:
+        try:
+            if path.read_bytes() != before:
+                raise AccountEditError('账号数据已变化，请刷新后重试。')
+        except OSError:
+            raise AccountEditError('账号文件无法读取，未保存。') from None
+
+    save_account_store_atomic(path, store, before_replace=guard)

@@ -19,6 +19,8 @@ class AccountSummary:
     short_id: str
     account_id: str
     status: str = '已保存'
+    nickname: str = ''
+    remark: str = ''
 
 
 def load_account_summaries(path: Path) -> list[AccountSummary]:
@@ -29,7 +31,11 @@ def load_account_summaries(path: Path) -> list[AccountSummary]:
                     else hashlib.sha256(raw_id.encode('utf-8')).hexdigest()[:12])
         username = re.sub(r'[^A-Za-z0-9._-]', '',
                           str(account.get('username') or '').lstrip('@'))[:64]
-        summaries.append(AccountSummary(username or '未获取用户名', short_id, raw_id))
+        status = '登录失效：接口要求重新登录' if account.get('login_expired') is True else '已保存'
+        nickname = str(account.get('nickname') or '').replace('\r', ' ').replace('\n', ' ')[:100]
+        remark = str(account.get('remark') or '').replace('\r', ' ').replace('\n', ' ')[:200]
+        summaries.append(AccountSummary(username or '未获取用户名', short_id, raw_id,
+                                        status, nickname, remark))
     return summaries
 
 
@@ -82,12 +88,21 @@ class _SendCheckDelegate(QStyledItemDelegate):
 
 class AccountTable(QTableWidget):
     delivery_details_requested = Signal(str)
+    remark_edited = Signal(str, str)
+    COL_SEND = 0
+    COL_USERNAME = 1
+    COL_NICKNAME = 2
+    COL_ID = 3
+    COL_REMARK = 4
+    COL_STATUS = 5
+    COL_DELIVERY = 6
 
     def __init__(self, parent=None):
-        super().__init__(0, 5, parent)
+        super().__init__(0, 7, parent)
         self.setObjectName('accountTable')
-        self.setHorizontalHeaderLabels(['发送', '账号用户名', '账号 ID', '状态', '消息展示'])
-        self.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.setHorizontalHeaderLabels(['发送', '账号用户名', '昵称', '账号 ID', '备注', '状态', '消息展示'])
+        self.setEditTriggers(QAbstractItemView.EditTrigger.DoubleClicked |
+                             QAbstractItemView.EditTrigger.EditKeyPressed)
         self.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.verticalHeader().hide()
         self.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeMode.Stretch)
@@ -97,14 +112,31 @@ class AccountTable(QTableWidget):
         self.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOn)
         self.verticalScrollBar().setAccessibleName('上下查看已保存账号')
         self._account_ids = []
+        self._search_names = []
+        self._remarks = {}
+        self._filter = ''
         self._delivery = {}
+        self._expired_ids = set()
         self._selection_locked = False
         self.cellClicked.connect(self._open_delivery_details)
         self.cellActivated.connect(self._open_delivery_details)
+        self.itemChanged.connect(self._on_item_changed)
 
     def _open_delivery_details(self, row, column):
-        if column == 4 and 0 <= row < len(self._account_ids):
+        if column == self.COL_DELIVERY and 0 <= row < len(self._account_ids):
             self.delivery_details_requested.emit(self._account_ids[row])
+
+    def _on_item_changed(self, item):
+        if item.column() != self.COL_REMARK or not 0 <= item.row() < len(self._account_ids):
+            return
+        key = self._account_ids[item.row()]
+        if item.text() != self._remarks.get(key, ''):
+            self.remark_edited.emit(key, item.text())
+
+    def set_filter(self, query: str) -> None:
+        self._filter = query.strip().casefold()
+        for row, names in enumerate(self._search_names):
+            self.setRowHidden(row, bool(self._filter and self._filter not in names))
 
     def delivery_details(self, key):
         state = self._delivery.get(key)
@@ -112,7 +144,21 @@ class AccountTable(QTableWidget):
 
     def set_accounts(self, summaries: list[AccountSummary]) -> None:
         checked = set(self.checked_account_ids())
+        previous_signals = self.blockSignals(True)
+        try:
+            self._set_accounts(summaries, checked)
+        finally:
+            self.blockSignals(previous_signals)
+
+    def _set_accounts(self, summaries, checked):
+        self._expired_ids = {summary.account_id for summary in summaries if summary.status.startswith('登录失效')}
+        for summary in summaries:
+            if summary.account_id in self._delivery:
+                self._delivery[summary.account_id]['expired'] = summary.account_id in self._expired_ids
         self._account_ids = [summary.account_id for summary in summaries]
+        self._search_names = [(summary.username + '\n' + summary.nickname).casefold()
+                              for summary in summaries]
+        self._remarks = {summary.account_id: summary.remark for summary in summaries}
         self.setRowCount(len(summaries))
         for row, summary in enumerate(summaries):
             check = QTableWidgetItem()
@@ -120,12 +166,20 @@ class AccountTable(QTableWidget):
             check.setCheckState(Qt.CheckState.Checked if summary.account_id in checked
                                 else Qt.CheckState.Unchecked)
             self.setItem(row, 0, check)
-            for column, value in enumerate((summary.username, summary.short_id, summary.status), 1):
+            for column, value in enumerate((summary.username, summary.nickname,
+                                            summary.short_id, summary.remark, summary.status), 1):
                 item = QTableWidgetItem(value)
-                item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                if column != self.COL_REMARK:
+                    item.setFlags(item.flags() & ~Qt.ItemFlag.ItemIsEditable)
+                else:
+                    item.setToolTip('双击编辑备注，按 Enter 或点击别处保存')
+                if column == self.COL_STATUS and summary.status.startswith('登录失效'):
+                    item.setForeground(QColor('#c62828'))
+                    item.setToolTip(summary.status + '；账号已保留，请重新登录更新或手动删除。')
                 self.setItem(row, column, item)
             self._render_delivery(row, summary.account_id)
         self.set_selection_locked(self._selection_locked)
+        self.set_filter(self._filter)
 
     def set_selection_locked(self, locked):
         self._selection_locked = bool(locked)
@@ -138,6 +192,13 @@ class AccountTable(QTableWidget):
                 flags |= Qt.ItemFlag.ItemIsUserCheckable
             if item.flags() != flags:
                 item.setFlags(flags)
+            remark = self.item(row, self.COL_REMARK)
+            if remark is not None:
+                flags = remark.flags()
+                updated = (flags & ~Qt.ItemFlag.ItemIsEditable if locked
+                           else flags | Qt.ItemFlag.ItemIsEditable)
+                if updated != flags:
+                    remark.setFlags(updated)
 
     def begin_delivery(self, account_ids, total):
         self._delivery = {key: {'total': total, 'delivered': 0, 'pending': True,
@@ -159,6 +220,7 @@ class AccountTable(QTableWidget):
                 state['delivered'] = sum(a.get('delivered', 0) for _, a in entries)
                 state['sent'] = sum(a.get('sent', 0) for _, a in entries)
                 codes = {code for _, a in entries for code in reasons_for(a)}
+                state['expired'] = state.get('expired', False) or 'expired' in codes or any(a.get('expired', 0) for _, a in entries)
                 state['restriction'] = ('已封禁' if 'account_banned' in codes else
                                         '已禁言' if 'account_silenced' in codes else
                                         '房间禁评' if 'room_comment_restricted' in codes else
@@ -216,8 +278,12 @@ class AccountTable(QTableWidget):
                 text, color = '已停止 ' + count, '#667085'
             else:
                 text, color = '未确认展示 ' + count, '#b54708'
-        status = self.item(row, 3)
-        if status is not None and state is not None:
+        status = self.item(row, self.COL_STATUS)
+        if status is not None and (key in self._expired_ids or state and state.get('expired')):
+            status.setText('登录失效：接口要求重新登录')
+            status.setForeground(QColor('#c62828'))
+            status.setToolTip('登录失效：接口要求重新登录；账号已保留，请重新登录更新或手动删除。')
+        elif status is not None and state is not None:
             status.setText('正在运行' if state.get('running') else
                            '等待执行' if state.get('pending') else '已结束')
         elif status is not None:
@@ -251,7 +317,7 @@ class AccountTable(QTableWidget):
         item.setFlags(Qt.ItemFlag.ItemIsEnabled | Qt.ItemFlag.ItemIsSelectable)
         item.setForeground(QColor(color))
         item.setToolTip(tip + '\n点击此列查看完整详情。')
-        self.setItem(row, 4, item)
+        self.setItem(row, self.COL_DELIVERY, item)
 
     def checked_account_ids(self) -> list[str]:
         return [account_id for row, account_id in enumerate(self._account_ids)
@@ -269,6 +335,6 @@ class AccountTable(QTableWidget):
 
     def selected_account_id(self) -> str | None:
         row = self.currentRow()
-        if 0 <= row < len(self._account_ids):
+        if 0 <= row < len(self._account_ids) and not self.isRowHidden(row):
             return self._account_ids[row]
         return None

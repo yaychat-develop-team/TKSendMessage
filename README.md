@@ -1,128 +1,172 @@
-# TKChatWave
+# TKSendMessage · TKChatWave
 
-Windows 桌面工具，复用独立复制的 `tiktok_live` 业务核心。主界面只需填写**目标直播间用户名**和**消息内容**，新增或更新账号时会打开独立 Chromium 窗口进入官方登录页面。支持二维码、手机号、邮箱、Google、Facebook 等官方页面实际提供的登录方式。
+面向 Windows 的 TikTok 直播评论桌面工具。项目在本机管理登录账号，按用户选择向一个或多个直播间发送评论，并通过独立直播消息连接观察评论是否实际出现在直播间。
 
-## 使用发布版
+> 本项目仅用于你拥有或已获授权的账号、直播间和测试场景。请遵守 TikTok 服务条款、当地法律以及直播间规则，不得用于骚扰、刷屏、规避平台限制或其他滥用行为。
 
-发送前会等待目标直播间入房响应、至少 30 秒及三次成功发出的心跳。
-心跳发送间隔可在运行设置中调整，默认 10 秒（1–60 秒）；断线、房间不匹配或预热超时会阻止发送。
-启用独立监听时，连接重试耗尽会终止本次任务；`s_v_web_id` 有值则带、无值则省略。
-接口受理和独立监听接收不等于其他登录账号的网页已显示，仍需区分验证结果。
+## 功能概览
 
-1. 将 `dist/TKChatWave.exe` 复制到可写目录，例如自己的用户目录。
-2. 双击 `TKChatWave.exe`。发布版为单文件程序，只分发这一个 EXE 即可；首次运行会在 EXE 同级自动创建 `runtime/`。
-3. 点击“新增 / 更新账号”完成登录。每次登录使用新的无痕 Chromium 会话；程序会在窗口关闭前提取并保存 Cookie。此按钮只保存账号，不发送消息。
-4. 勾选本轮要发送的账号，填写目标主播用户名（可带 `@`）与消息，再点击“开始发送”。未勾选账号不会发送；没有勾选时发送按钮不可用。
-5. 账号列表会显示登录页面识别到的用户名；旧记录显示“未获取用户名”时，使用“新增 / 更新账号”重新登录同一账号即可补全。
-6. 选中账号行后可点击“查看详情”编辑并保存完整记录（含 Cookie 等敏感信息），或点击“删除账号”。“全选 / 清空选择”控制本轮发送账号。账号表有独立滚动条；拖动上方内容与日志之间的分隔条可调整高度。日志右下角的“清空控制台”只清除窗口显示，不删除每日文件。
-7. 点击右上角“设置”，可调整登录超时、账号间隔、弹幕确认、重试次数与间隔、监听连接和 roomId 兜底 Cookie；保存后写入 `runtime/desktop-settings.json`。
-8. 点击“停止”请求取消；当前请求或监听等待完成后，在下一账号或重试边界停止。关闭程序也会先等待后台工作安全退出。
+- 通过 TikTok 官方网页完成登录，支持二维码及页面实际提供的其他登录方式。
+- 本地保存并管理多个账号，可编辑备注、筛选、批量勾选和重新登录更新。
+- 支持单个或多个目标直播间；多个用户名使用 `;` 或 `；` 分隔。
+- 支持串行和并行房间模式，并可配置发送次数、间隔、观察时间及重试策略。
+- 使用独立 WSS 连接完成房间状态、进房响应、心跳和评论展示观察。
+- 将“接口已接受”“已观察到展示”“未观察到”“监听不可用”和“发送失败”分别记录。
+- 保存按日期划分的脱敏日志和按房间、账号隔离的运行报告。
+- 提供 Windows 单文件打包脚本；源码也可直接运行。
 
-匿名监听可在“设置 → 监听连接”中单独填写 SOCKS5 代理，留空沿用原有网络。只影响匿名初始化、WSS 和重连，不改变账号 fetch、发消息及心跳的网络。详见 [匿名监听代理说明](docs/observer-socks5.md)。
+## 运行要求
 
-发布版包含 Python、Qt 依赖和固定版本 Chromium，无需安装 Python、Chrome、Node.js 或 Playwright。需要 Windows 10/11 64 位及能够访问 TikTok、登录服务与直播弹幕流的网络。尚未在另一台干净 Windows 机器上验收。
+| 项目 | 要求 |
+| --- | --- |
+| 操作系统 | Windows 10/11 64 位 |
+| Python | 3.10 或更高版本；项目验证环境为 3.10.19 |
+| 浏览器 | Chrome、Chromium，或项目目录下的 `browser/chromium/chrome.exe` |
+| 网络 | 能正常访问 TikTok 登录页、直播页面和直播消息服务 |
 
-账号、Cookie、会话与桌面设置保存在 EXE 同级 `runtime/`，不会自动读取原项目账号。复制 EXE 不会带走已有 Cookie；`runtime` 含敏感登录资料，仅在本机妥善保管，不随发布包分发。完整操作、结果解释和排障见 [桌面使用说明](docs/desktop-usage.md)，CLI 兼容入口见 [脚本与业务说明](docs/usage.md)。
+发布版会将 Python、Qt 和 Chromium 打入单个 EXE；本仓库不提交 EXE、浏览器文件、账号数据或运行缓存。
 
-## macOS 构建
+## 快速开始
 
-macOS `.app` 必须在 Mac 上构建，Windows 上的 PyInstaller 不能跨平台生成可运行的 macOS 程序。把源码复制到 Mac，准备与目标 Mac 架构匹配的 `Chromium.app`，然后执行：
-
-最简单的方式是在 Mac 上安装 Python 3 以及 Google Chrome、Chrome for Testing 或 Chromium，解压源码包后双击 `Build-macOS.command`。脚本会创建独立构建环境、自动查找浏览器、安装项目依赖并生成 `dist-macos/TikTokLiveTool-mac.zip`。这个最终 ZIP 已包含 Python、Qt、业务依赖和浏览器，可以直接发给相同 CPU 架构的 Mac 用户；最终用户无需安装 Python 或浏览器。
-
-如果 macOS 因下载文件权限而不允许双击，可在终端进入项目目录后执行一次 `chmod +x Build-macOS.command`，再双击运行。
-
-也可以手动构建：
-
-```bash
-cd /path/to/tiktok_desktop_tool
-chmod +x build/build_macos.sh
-./build/build_macos.sh /Applications/Chromium.app
-```
-
-输出为 `dist-macos/TikTokLiveTool.app`，包含 Chromium。首次运行后，账号 Cookie、配置、报告和日志保存到 `~/Library/Application Support/TikTokLiveTool/runtime/`，不会修改 `.app` 包。未签名应用在其他 Mac 上可能需要完成开发者签名、公证或由用户在系统安全设置中允许打开。本项目不会自动提交源码或产物到 GitHub。
-## 源码运行与构建
-
-本仓库仅包含源码、测试和文档，不包含账号、Cookie、代理凭据、浏览器登录资料、构建缓存或 EXE。`runtime/`、`dist/`、`releases/` 和本机临时排查目录不得加入 Git；发布时仅分发经过验证的干净程序包。
-
-开发环境使用 Python 3.10 或更高版本；已验证环境为 Python 3.10.19。桌面依赖使用 `PySide6-Essentials`，不使用 QtWebEngine。PowerShell 示例：
+### 1. 获取源码
 
 ```powershell
-cd D:\Myproject\forya\tiktok_desktop_tool
+git clone https://github.com/yaychat-develop-team/TKSendMessage.git
+cd TKSendMessage
+```
+
+### 2. 创建环境并安装依赖
+
+```powershell
 python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install --upgrade pip
 .\.venv\Scripts\python.exe -m pip install -r requirements-desktop.txt
+```
+
+### 3. 启动桌面程序
+
+```powershell
 .\.venv\Scripts\python.exe app.py
 ```
 
-源码桌面模式优先使用 `browser/chromium/chrome.exe`；未放置浏览器时，DrissionPage 可使用系统 Chrome 或 `TIKTOK_BROWSER_EXECUTABLE` 指定的可执行文件。发布版必须包含内置 Chromium，优先级高于此环境变量。
+如果项目没有内置 Chromium，程序会尝试使用系统浏览器；也可以通过 `TIKTOK_BROWSER_EXECUTABLE` 指定浏览器可执行文件。
 
-构建需要一个只包含 Chromium 程序文件的干净目录（根目录有 `chrome.exe`），不能包含登录资料，也不能与项目的浏览器暂存、构建或发布目录重叠：
+### 4. 完成首次使用
+
+1. 点击“新增 / 更新账号”，在打开的 TikTok 官方页面完成登录。
+2. 登录采集完成后，回到主界面勾选本轮要使用的账号。
+3. 输入主播用户名，例如 `creator` 或 `@creator`；多个直播间可写为 `creator_a;creator_b`。
+4. 输入消息并设置每账号每直播间的发送次数与间隔。
+5. 点击“开始发送”，在账号表和运行日志中查看接口结果及展示观察结果。
+
+## 如何理解结果
+
+HTTP `200` 或业务 `status_code=0` 只表示评论接口接受了请求，不能单独证明其他观众已经看到评论。
+
+| 状态 | 含义 |
+| --- | --- |
+| 已观察到消息 / `delivered` | 独立监听在观察窗口内收到符合当前匹配规则的评论事件。 |
+| 已接受 / 未观察到 / `accepted_not_observed` | 接口接受请求，但监听窗口内没有观察到对应评论。 |
+| 监听不可用 / `listener_unavailable` | 无法建立或维持观察连接，因此不能判断是否展示。 |
+| 发送失败 / `send_failed` | 消息请求、登录状态、房间状态或必要准备流程失败。 |
+| 登录失效 | 平台明确要求重新登录；账号记录保留，更新登录后可继续使用。 |
+
+展示观察是辅助证据，不是平台送达承诺。需要严格验收时，应在另一个正常观众端人工核对发送者、正文和消息 ID。
+
+## 多直播间与并发
+
+- 默认串行：同一账号按填写顺序处理直播间，不同账号仍可并发。
+- 并行模式：最多同时处理 3 个直播间，其余目标排队。
+- 计划请求量 = 勾选账号数 × 去重直播间数 × 每账号每直播间发送次数。
+- “停止”会阻止尚未开始的后续请求，但不能撤回已经提交的评论。
+
+请从较低频率开始测试。并发账号、直播间和发送次数越多，网络连接、内存占用以及平台风控风险越高。
+
+## 数据与隐私
+
+源码模式默认在项目目录创建运行数据；发布版在 EXE 同级创建：
+
+```text
+runtime/
+├─ accounts/tiktok_accounts.json
+├─ desktop-settings.json
+├─ profiles/
+├─ reports/
+└─ logs/YYYY-MM-DD.log
+```
+
+`runtime/` 可能包含 Cookie、用户代理、Ticket Guard 会话材料和其他登录信息：
+
+- 不要提交、截图或发送给其他人。
+- 不要把使用过的 `runtime/`、浏览器 profile 或日志打进发布包。
+- 仓库已忽略常见账号库、报告、密钥、日志、构建缓存和诊断输出。
+- 如果凭证曾进入公开 Git 历史，仅删除文件并不安全，应立即让相关会话失效并重新登录。
+
+## Windows 打包
+
+先准备一个干净的 Chromium 目录，目录根部应包含 `chrome.exe`，且不能含任何登录 profile：
 
 ```powershell
 .\.venv\Scripts\python.exe -m pip install -r requirements-build.txt
-.\build\build.ps1 -ChromiumPath 'D:\BrowserVendor\chrome-win64' -PythonExecutable '.\.venv\Scripts\python.exe'
+.\build\build.ps1 `
+  -ChromiumPath 'D:\BrowserVendor\chrome-win64' `
+  -PythonExecutable '.\.venv\Scripts\python.exe'
 ```
 
-单文件构建使用 `build/tiktok_desktop_onefile.spec`，把 Python、Qt、业务源码和固定 Chromium 打入 `dist/TKChatWave.exe`。发布前需执行离线回归及冻结 GUI/内置浏览器冒烟；构建不会下载浏览器，也不应将带账号数据的已使用目录当作发布输入。
+构建结果位于 `dist/TKChatWave.exe`。发布前请使用一次性运行目录进行验证，不要直接分发本机使用过的 `runtime/`。
 
-单独检查：
+macOS 必须在 Mac 上构建，详见 [`build/build_macos.sh`](build/build_macos.sh) 和 [`build/macos_one_click.py`](build/macos_one_click.py)。Windows 上的 PyInstaller 不能生成可运行的 macOS 应用。
+
+## 测试
 
 ```powershell
-$env:QT_QPA_PLATFORM = 'offscreen'
-python -X faulthandler -m unittest discover -v
-python build/verify_release.py dist/TKChatWave
-python build/smoke_release.py dist/TKChatWave
 python -m compileall -q app.py desktop tiktok_live build tests
+python -X faulthandler -m unittest discover -v
 ```
 
-离线测试使用模拟依赖与合成数据。发布冒烟在一次性副本上启动冻结 GUI，并通过本地 CDP 打开内置 Chromium 的 `about:blank` 后退出；不完成真实登录或发送。真实账号保存、各登录方式/OAuth 窗口切换和一次真实发送需要用户交互验收，当前不声称已验证。
+离线测试使用合成数据，不会登录真实账号或发送真实评论。真实平台状态可能变化，发布前仍需在获授权的账号和直播间中进行小规模交互验收。
 
-## 目录
+## 项目结构
 
 ```text
-tiktok_desktop_tool/
-├─ app.py                       # 桌面入口
-├─ desktop/                     # Qt 界面、线程与运行路径
-├─ tiktok_live/                 # 账号、签名、直播间、发送业务
-├─ send_live_message.py          # 兼容 CLI / Python 导入入口
-├─ listen_msg.py                 # 弹幕监听
-├─ settings.py                  # CLI 输入与源码高级默认值
-├─ requirements*.txt
-├─ browser/chromium/            # 构建暂存的浏览器（忽略）
-├─ runtime/                     # 桌面运行资料（忽略）
-├─ build/                       # 构建、校验与冒烟脚本
-├─ dist/TKChatWave.exe           # 单文件发布版（忽略）
-├─ tests/
-└─ docs/
+TKSendMessage/
+├─ app.py                    # 桌面程序入口
+├─ desktop/                  # Qt 界面、设置和后台工作线程
+├─ tiktok_live/              # 账号、请求签名、房间与消息流程
+├─ listen_msg.py             # 直播消息观察入口
+├─ send_live_message.py      # CLI / Python 兼容入口
+├─ settings.py               # CLI 默认配置
+├─ build/                    # Windows/macOS 构建与发布校验脚本
+├─ tests/                    # 离线回归测试和合成夹具
+└─ docs/                     # 架构、操作和排障文档
 ```
 
-本仓库与 `D:\Myproject\forya\tiktok` 独立，签名、账号去重和分类逻辑延续复制的业务实现。 登录时按账号保存浏览器实际 UA 和 Ticket Guard 原始状态。后续请求复用 UA，但每一次消息 POST（含重试）都用该账号状态与当前时间重新生成 Ticket Guard 签名，不复用缓存请求头；状态缺失或无效时停止发送并提示重新登录。`ROOM_ID_COOKIE` 保持为空；桌面用户无需填写 Cookie。完整 Cookie、`msToken`、CSRF、签名和 Ticket Guard 密钥不进入桌面日志或发布包；只有用户主动点击“查看详情”时才在本机详情窗口显示保存记录。输入的消息正文可能进入日志，请勿将凭据填入消息。
-# Direct WSS integration
+## 文档
 
-room_id 查询沿用原脚本的 curl_cffi 会话与直播页请求，先尝试账号 Cookie、再尝试已配置的备用 Cookie。
-页面返回 WAF、临时 TLS/超时、HTTP 错误或没有 room_id 时，同一会话查询 `/api-live/user/room/`，用户名动态传入；接口临时网络故障/服务端故障最多尝试两次。
-这些请求共用运行设置的查询超时预算，预留接口重试时间；只查询 room_id 不强制等待 SDK 令牌刷新。消息发送前仍单独刷新令牌，发送和心跳逻辑不变。
-查询结果分别提供房间 ID 和开播状态：状态 4 保留查询到的 ID 但标记未开播，未知状态不视为在线；两者均禁止后续 WSS/发送。页面 ID 按目标主播的 hydration 状态绑定，不选推荐房间 ID。
-查询不启动浏览器，不输出 Cookie 或令牌。
+- [桌面使用说明](docs/desktop-usage.md)
+- [业务与脚本说明](docs/usage.md)
+- [项目架构](docs/architecture.md)
+- [直播消息链路与失败点](docs/live-message-failure-points.md)
+- [匿名监听代理说明](docs/observer-socks5.md)
 
-运行设置现按以下规则生效：账号仍然并发，“账号启动错峰间隔”仅控制同一直播间
-各账号的启动间隔，0 秒同时启动（新设置默认 0，已有保存值保持不变）。
-主界面发送次数为每账号每直播间的计划消息数；每条消息总尝试次数包含首次，
-临时网络/HTTP 故障和未观察到消息共用这一上限。已观察成功、登录失效、禁言、
-明确终止和取消不再重试。未观察到后的重发可能产生重复弹幕。
-WSS 超时、失败后重试次数及重试间隔同时用于访客监听和账号初次连接/预热；
-每次账号新连接仍需至少 30 秒、3 次成功心跳、18 秒跨度和服务端入房响应。
-心跳发送间隔同时用于账号和访客连接，默认 10 秒、范围 1–60 秒。账号预热等待 3 个心跳周期，例如 5 秒间隔预热 15 秒、10 秒间隔预热 30 秒；同时必须成功发送至少 3 次目标房间心跳并收到进房响应。每次实际发送心跳都会打印角色、房间和序号；确认收到对应弹幕后，“消息成功展示”以绿色显示。
-已建立账号连接中途断开则停止后续发送，不自动重放已发送的消息。
-“显示弹幕”进入界面日志，保留房间/账号上下文和敏感内容过滤。
-界面与保存文件的数值范围一致（秒数上限 3600）；非法或非有限数值回退默认值。
+## 常见问题
 
-The desktop listener uses the supplied standalone script's Python-only
-`standalone_audience_direct_v1` profile. Visitor Cookie initialization observes
-delivery; separate account Cookie connections supply room heartbeats. Each
-account waits at least 30 seconds, three successful target-room heartbeats and
-a server entry response before sending. Connections stay open during the burst.
-TikTokLive and Node are not runtime dependencies. Offline tests do not establish
-real-platform connectivity or message visibility; no live account is used by
-the offline release checks.
+### 接口成功但直播间看不到消息
 
+接口接受和公开展示是两个阶段。请检查日志中的展示分类、直播间评论限制、账号状态、评论过滤、观察连接及网络延迟，避免连续快速重发。
+
+### 登录后账号没有保存
+
+等待 TikTok 页面完整加载并返回登录状态。程序只有在关键登录 Cookie 和会话材料完整时才会保存；取消、超时或不完整登录不会覆盖已有账号。
+
+### 程序提示 `initial_fetch_unavailable`
+
+表示评论提交前的直播数据初始化没有成功。请确认主播正在直播、账号登录有效、网络可访问直播服务，并在降低频率后重试。
+
+### 可以把账号文件发给别人排查吗
+
+不可以。账号文件包含完整登录资料。只分享脱敏后的错误分类、HTTP 状态、业务状态和必要日志片段。
+
+## 免责声明
+
+本项目按现状提供，不保证对平台后续接口、风控或页面变化持续兼容。使用者需要自行承担账号、内容、网络和合规风险，并确保所有操作均已获得授权。

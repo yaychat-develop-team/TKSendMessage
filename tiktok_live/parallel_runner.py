@@ -123,6 +123,10 @@ def run_parallel_targets(targets: tuple[str, ...], message: str, *,
     with IsolatedAccountRuns(store_path, temporary_root, selected_account_ids) as runs:
         if not runs.accounts:
             raise ValueError('No saved accounts')
+        account_stops = [threading.Event() for _ in runs.accounts]
+        for index, account in enumerate(runs.accounts):
+            if account.get('login_expired') is True:
+                account_stops[index].set()
         rooms = [{'target': target, 'accounts': [
             {**_counts({}), 'id': _safe_id(account['id']),
              'username': _safe_name(account.get('username')), 'status': 'queued'}
@@ -160,6 +164,8 @@ def run_parallel_targets(targets: tuple[str, ...], message: str, *,
             with lock:
                 item = rooms[room_index]['accounts'][account_index]
                 incoming_reasons = safe_failure_reasons(counts.get('failure_reasons')) if counts else []
+                if counts and (counts.get('expired', 0) > 0 or 'expired' in incoming_reasons):
+                    account_stops[account_index].set()
                 if ('room_comment_restricted' in incoming_reasons or
                         error is not None and error.get('classification') == 'room_comment_restricted'):
                     if not room_stops[room_index].is_set():
@@ -175,6 +181,11 @@ def run_parallel_targets(targets: tuple[str, ...], message: str, *,
                     item['cancelled'] = False
                     item['failure_reasons'] = list(dict.fromkeys(
                         item.get('failure_reasons', []) + ['room_comment_restricted']))
+                    if status in ('cancelled', 'completed'):
+                        status = 'failed'
+                if account_stops[account_index].is_set():
+                    item['cancelled'] = False
+                    item['failure_reasons'] = list(dict.fromkeys(item.get('failure_reasons', []) + ['expired']))
                     if status in ('cancelled', 'completed'):
                         status = 'failed'
                 if status is not None:
@@ -197,10 +208,13 @@ def run_parallel_targets(targets: tuple[str, ...], message: str, *,
             account = runs.accounts[account_index]
             safe = room['accounts'][account_index]
             def task_cancelled():
-                return cancelled() or room_stops[room_index].is_set()
+                return cancelled() or room_stops[room_index].is_set() or account_stops[account_index].is_set()
             def stop_before_start():
                 if cancelled():
                     update(room_index, account_index, status='cancelled')
+                elif account_stops[account_index].is_set():
+                    update(room_index, account_index, status='failed',
+                           error=_error(SafeOperationError('expired')))
                 else:
                     update(room_index, account_index, status='failed',
                            error=_error(SafeOperationError('room_comment_restricted')))
